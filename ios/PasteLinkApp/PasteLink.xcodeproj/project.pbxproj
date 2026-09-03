@@ -1,0 +1,546 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		10010001 /* PasteLinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010001 /* PasteLinkApp.swift */; };
+		10010002 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010002 /* MainTabView.swift */; };
+		10010003 /* ClipboardFeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010003 /* ClipboardFeedView.swift */; };
+		10010004 /* HardwareIntegrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010004 /* HardwareIntegrationView.swift */; };
+		10010005 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010005 /* SettingsView.swift */; };
+		10010006 /* DeviceBannerCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010006 /* DeviceBannerCard.swift */; };
+		10010007 /* ClipboardCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010007 /* ClipboardCardView.swift */; };
+		10010008 /* PairingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010008 /* PairingSheet.swift */; };
+		10010009 /* BluetoothManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010009 /* BluetoothManager.swift */; };
+		10010010 /* PasteLinkStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010010 /* PasteLinkStore.swift */; };
+		10010011 /* CryptoEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010011 /* CryptoEngine.swift */; };
+		10010012 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010012 /* LiveActivityManager.swift */; };
+		10010013 /* PasteIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010013 /* PasteIntents.swift */; };
+		10010014 /* PasteLinkActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010014 /* PasteLinkActivityAttributes.swift */; };
+		10010015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20010015 /* Assets.xcassets */; };
+		10020001 /* PasteLinkWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20020001 /* PasteLinkWidget.swift */; };
+		10020002 /* PasteLinkStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010010 /* PasteLinkStore.swift */; };
+		10020003 /* CryptoEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010011 /* CryptoEngine.swift */; };
+		10020004 /* PasteIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010013 /* PasteIntents.swift */; };
+		10020005 /* PasteLinkActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010014 /* PasteLinkActivityAttributes.swift */; };
+		10020006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20020006 /* Assets.xcassets */; };
+		10030001 /* PasteLinkWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 20020000 /* PasteLinkWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		30010001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 00000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 40020001;
+			remoteInfo = PasteLinkWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		50010001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				10030001 /* PasteLinkWidgetExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		20010000 /* PasteLink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PasteLink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		20010001 /* PasteLinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteLinkApp.swift; sourceTree = "<group>"; };
+		20010002 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		20010003 /* ClipboardFeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardFeedView.swift; sourceTree = "<group>"; };
+		20010004 /* HardwareIntegrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareIntegrationView.swift; sourceTree = "<group>"; };
+		20010005 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		20010006 /* DeviceBannerCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBannerCard.swift; sourceTree = "<group>"; };
+		20010007 /* ClipboardCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardCardView.swift; sourceTree = "<group>"; };
+		20010008 /* PairingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingSheet.swift; sourceTree = "<group>"; };
+		20010009 /* BluetoothManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothManager.swift; sourceTree = "<group>"; };
+		20010010 /* PasteLinkStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteLinkStore.swift; sourceTree = "<group>"; };
+		20010011 /* CryptoEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoEngine.swift; sourceTree = "<group>"; };
+		20010012 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
+		20010013 /* PasteIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteIntents.swift; sourceTree = "<group>"; };
+		20010014 /* PasteLinkActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteLinkActivityAttributes.swift; sourceTree = "<group>"; };
+		20010015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		20010016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		20010017 /* PasteLink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PasteLink.entitlements; sourceTree = "<group>"; };
+		20020000 /* PasteLinkWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PasteLinkWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		20020001 /* PasteLinkWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteLinkWidget.swift; sourceTree = "<group>"; };
+		20020006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		20020016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		20020017 /* PasteLinkWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PasteLinkWidget.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		60010001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		60020001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		00000002 = {
+			isa = PBXGroup;
+			children = (
+				00010000 /* PasteLink */,
+				00020000 /* PasteLinkWidget */,
+				00030000 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		00010000 /* PasteLink */ = {
+			isa = PBXGroup;
+			children = (
+				20010017 /* PasteLink.entitlements */,
+				20010016 /* Info.plist */,
+				00010001 /* App */,
+				00010002 /* Views */,
+				00010003 /* Core */,
+				00010004 /* Intents */,
+				20010015 /* Assets.xcassets */,
+			);
+			path = PasteLink;
+			sourceTree = "<group>";
+		};
+		00010001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				20010001 /* PasteLinkApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		00010002 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				20010002 /* MainTabView.swift */,
+				20010003 /* ClipboardFeedView.swift */,
+				20010004 /* HardwareIntegrationView.swift */,
+				20010005 /* SettingsView.swift */,
+				20010006 /* DeviceBannerCard.swift */,
+				20010007 /* ClipboardCardView.swift */,
+				20010008 /* PairingSheet.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		00010003 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				20010009 /* BluetoothManager.swift */,
+				20010010 /* PasteLinkStore.swift */,
+				20010011 /* CryptoEngine.swift */,
+				20010012 /* LiveActivityManager.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		00010004 /* Intents */ = {
+			isa = PBXGroup;
+			children = (
+				20010013 /* PasteIntents.swift */,
+				20010014 /* PasteLinkActivityAttributes.swift */,
+			);
+			path = Intents;
+			sourceTree = "<group>";
+		};
+		00020000 /* PasteLinkWidget */ = {
+			isa = PBXGroup;
+			children = (
+				20020017 /* PasteLinkWidget.entitlements */,
+				20020016 /* Info.plist */,
+				20020001 /* PasteLinkWidget.swift */,
+				20020006 /* Assets.xcassets */,
+			);
+			path = PasteLinkWidget;
+			sourceTree = "<group>";
+		};
+		00030000 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				20010000 /* PasteLink.app */,
+				20020000 /* PasteLinkWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		40010001 /* PasteLink */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 70010001 /* Build configuration list for PBXNativeTarget "PasteLink" */;
+			buildPhases = (
+				80010001 /* Sources */,
+				60010001 /* Frameworks */,
+				90010001 /* Resources */,
+				50010001 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				30010002 /* PBXTargetDependency */,
+			);
+			name = PasteLink;
+			productName = PasteLink;
+			productReference = 20010000 /* PasteLink.app */;
+			productType = "com.apple.product-type.application";
+		};
+		40020001 /* PasteLinkWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 70020001 /* Build configuration list for PBXNativeTarget "PasteLinkWidgetExtension" */;
+			buildPhases = (
+				80020001 /* Sources */,
+				60020001 /* Frameworks */,
+				90020001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PasteLinkWidgetExtension;
+			productName = PasteLinkWidgetExtension;
+			productReference = 20020000 /* PasteLinkWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		00000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					40010001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					40020001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = 70000001 /* Build configuration list for PBXProject "PasteLink" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 00000002;
+			productRefGroup = 00030000 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				40010001 /* PasteLink */,
+				40020001 /* PasteLinkWidgetExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		90010001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10010015 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		90020001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10020006 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		80010001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10010001 /* PasteLinkApp.swift in Sources */,
+				10010002 /* MainTabView.swift in Sources */,
+				10010003 /* ClipboardFeedView.swift in Sources */,
+				10010004 /* HardwareIntegrationView.swift in Sources */,
+				10010005 /* SettingsView.swift in Sources */,
+				10010006 /* DeviceBannerCard.swift in Sources */,
+				10010007 /* ClipboardCardView.swift in Sources */,
+				10010008 /* PairingSheet.swift in Sources */,
+				10010009 /* BluetoothManager.swift in Sources */,
+				10010010 /* PasteLinkStore.swift in Sources */,
+				10010011 /* CryptoEngine.swift in Sources */,
+				10010012 /* LiveActivityManager.swift in Sources */,
+				10010013 /* PasteIntents.swift in Sources */,
+				10010014 /* PasteLinkActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		80020001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10020001 /* PasteLinkWidget.swift in Sources */,
+				10020002 /* PasteLinkStore.swift in Sources */,
+				10020003 /* CryptoEngine.swift in Sources */,
+				10020004 /* PasteIntents.swift in Sources */,
+				10020005 /* PasteLinkActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		30010002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 40020001 /* PasteLinkWidgetExtension */;
+			targetProxy = 30010001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		70000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ENABLE_APP_INTENTS_SSU_TRAINING = NO;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		70000003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ENABLE_APP_INTENTS_SSU_TRAINING = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		70010002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PasteLink/PasteLink.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 4SR54G3G54;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PasteLink/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PasteLink;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ENABLE_APP_INTENTS_SSU_TRAINING = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pastelink.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		70010003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PasteLink/PasteLink.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 4SR54G3G54;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PasteLink/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PasteLink;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ENABLE_APP_INTENTS_SSU_TRAINING = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pastelink.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		70020002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_ENTITLEMENTS = PasteLinkWidget/PasteLinkWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 4SR54G3G54;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PasteLinkWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PasteLinkWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ENABLE_APP_INTENTS_SSU_TRAINING = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pastelink.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		70020003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_ENTITLEMENTS = PasteLinkWidget/PasteLinkWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 4SR54G3G54;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PasteLinkWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PasteLinkWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ENABLE_APP_INTENTS_SSU_TRAINING = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pastelink.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		70000001 /* Build configuration list for PBXProject "PasteLink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				70000002 /* Debug */,
+				70000003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		70010001 /* Build configuration list for PBXNativeTarget "PasteLink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				70010002 /* Debug */,
+				70010003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		70020001 /* Build configuration list for PBXNativeTarget "PasteLinkWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				70020002 /* Debug */,
+				70020003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 00000001 /* Project object */;
+}

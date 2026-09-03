@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- 主背景渐变 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="50%" stop-color="#1E293B" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <!-- 剪贴板高光渐变 -->
+    <linearGradient id="clipGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#818CF8" />
+    </linearGradient>
+
+    <!-- 闪电/连接连线渐变 -->
+    <linearGradient id="linkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="50%" stop-color="#A855F7" />
+      <stop offset="100%" stop-color="#EC4899" />
+    </linearGradient>
+
+    <!-- 柔和发光阴影 -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#0284C7" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- 外层圆角矩形 -->
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bgGrad)" />
+
+  <!-- 内部发光面板 -->
+  <rect x="70" y="70" width="884" height="884" rx="190" fill="none" stroke="rgba(255, 255, 255, 0.12)" stroke-width="6" />
+
+  <g filter="url(#glow)">
+    <!-- 剪贴板背板轮廓 -->
+    <rect x="230" y="240" width="564" height="600" rx="64" fill="rgba(30, 41, 59, 0.75)" stroke="url(#clipGrad)" stroke-width="28" />
+
+    <!-- 剪贴板顶部夹子 -->
+    <rect x="372" y="170" width="280" height="130" rx="40" fill="url(#clipGrad)" />
+    <circle cx="512" cy="235" r="32" fill="#0F172A" />
+
+    <!-- 剪贴板内部内容横条 -->
+    <rect x="330" y="380" width="364" height="28" rx="14" fill="rgba(255, 255, 255, 0.35)" />
+    <rect x="330" y="460" width="260" height="28" rx="14" fill="rgba(255, 255, 255, 0.25)" />
+
+    <!-- 跨设备极速连接连线 (双设备互联环扣) -->
+    <path d="M390 620 C 390 560, 450 560, 480 620 L 544 740 C 574 800, 634 800, 634 740" fill="none" stroke="url(#linkGrad)" stroke-width="40" stroke-linecap="round" />
+    <path d="M634 620 C 634 560, 574 560, 544 620 L 480 740 C 450 800, 390 800, 390 740" fill="none" stroke="url(#linkGrad)" stroke-width="40" stroke-linecap="round" />
+    
+    <!-- 核心光点 -->
+    <circle cx="512" cy="680" r="26" fill="#FFFFFF" />
+  </g>
+</svg>
