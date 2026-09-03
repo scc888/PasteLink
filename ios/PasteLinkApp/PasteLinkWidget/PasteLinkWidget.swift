@@ -69,7 +69,7 @@ struct PasteLinkWidgetProvider: TimelineProvider {
     }
 }
 
-/// 桌面与锁屏小组件视图 (双向双按钮，点击跳转快捷指令执行)
+/// 桌面与锁屏小组件视图 (双向双按钮，原地 Intent 执行，零跳转)
 struct PasteLinkWidgetEntryView: View {
     var entry: PasteLinkWidgetProvider.Entry
     @Environment(\.widgetFamily) var family
@@ -77,18 +77,19 @@ struct PasteLinkWidgetEntryView: View {
     var body: some View {
         switch family {
         case .accessoryCircular:
-            // 锁屏圆形组件 (点击触发一键复制快捷指令)
-            Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+            // 锁屏圆形组件 (原地复制)
+            Button(intent: CopyFromWidgetIntent()) {
                 ZStack {
                     AccessoryWidgetBackground()
                     Image(systemName: "arrow.down.doc.fill")
                         .font(.title3)
                 }
             }
+            .buttonStyle(.plain)
 
         case .accessoryRectangular:
-            // 锁屏长条组件 (点击触发一键复制快捷指令)
-            Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+            // 锁屏长条组件 (原地复制)
+            Button(intent: CopyFromWidgetIntent()) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Image(systemName: "desktopcomputer")
@@ -100,9 +101,10 @@ struct PasteLinkWidgetEntryView: View {
                         .lineLimit(2)
                 }
             }
+            .buttonStyle(.plain)
 
         case .systemSmall:
-            // 桌面小卡片 (Small): 双动作按钮 (分别跳转对应快捷指令)
+            // 桌面小卡片 (Small): 双动作按钮 (原地 Intent 执行)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: "arrow.left.arrow.right.circle.fill")
@@ -121,7 +123,7 @@ struct PasteLinkWidgetEntryView: View {
                 Spacer()
 
                 HStack(spacing: 6) {
-                    Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+                    Button(intent: CopyFromWidgetIntent()) {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.down.doc.fill")
                             Text("复制")
@@ -133,8 +135,9 @@ struct PasteLinkWidgetEntryView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
+                    .buttonStyle(.plain)
 
-                    Link(destination: PasteLinkShortcutHelper.pushShortcutURL) {
+                    Button(intent: PushFromWidgetIntent()) {
                         HStack(spacing: 2) {
                             Image(systemName: "paperplane.fill")
                             Text("推送")
@@ -146,13 +149,13 @@ struct PasteLinkWidgetEntryView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding()
-            .widgetURL(PasteLinkShortcutHelper.copyShortcutURL)
 
         default:
-            // 桌面中卡片 (Medium): 双向剪贴板看板
+            // 桌面中卡片 (Medium): 双向剪贴板看板 (原地 Intent 执行)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Image(systemName: "desktopcomputer")
@@ -175,8 +178,8 @@ struct PasteLinkWidgetEntryView: View {
                 Spacer()
 
                 HStack(spacing: 10) {
-                    // 按钮 1: 一键复制 (Windows → iPhone 快捷指令)
-                    Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+                    // 按钮 1: 一键复制 (Windows → iPhone 原地执行)
+                    Button(intent: CopyFromWidgetIntent()) {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.down.doc.fill")
                             Text("一键复制到 iPhone")
@@ -188,9 +191,10 @@ struct PasteLinkWidgetEntryView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
+                    .buttonStyle(.plain)
 
-                    // 按钮 2: 一键推送 (iPhone → Windows 快捷指令)
-                    Link(destination: PasteLinkShortcutHelper.pushShortcutURL) {
+                    // 按钮 2: 一键推送 (iPhone → Windows 原地执行)
+                    Button(intent: PushFromWidgetIntent()) {
                         HStack(spacing: 6) {
                             Image(systemName: "paperplane.fill")
                             Text("一键推送到电脑")
@@ -202,6 +206,7 @@ struct PasteLinkWidgetEntryView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding()
@@ -209,7 +214,7 @@ struct PasteLinkWidgetEntryView: View {
     }
 }
 
-// MARK: - 灵动岛 / 实时活动 视图 (Dynamic Island Widget - 点击跳转快捷指令)
+// MARK: - 灵动岛 / 实时活动 视图 (Dynamic Island Widget - 原地 Intent 执行)
 
 @available(iOSApplicationExtension 16.1, *)
 struct PasteLinkLiveActivityWidget: Widget {
@@ -217,7 +222,6 @@ struct PasteLinkLiveActivityWidget: Widget {
         ActivityConfiguration(for: PasteLinkActivityAttributes.self) { context in
             // 锁屏界面浮动横幅卡片
             lockScreenBanner(context: context)
-                .widgetURL(PasteLinkShortcutHelper.copyShortcutURL)
         } dynamicIsland: { context in
             DynamicIsland {
                 // 展开状态 (长按灵动岛时显示的大卡片)
@@ -240,11 +244,11 @@ struct PasteLinkLiveActivityWidget: Widget {
                             .lineLimit(2)
                             .padding(.horizontal, 8)
 
-                        // 点击直接跳转快捷指令执行复制动作
-                        Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+                        // 点击原地执行复制动作
+                        Button(intent: CopyFromWidgetIntent()) {
                             HStack {
                                 Image(systemName: "arrow.down.doc.fill")
-                                Text("运行快捷指令复制到 iPhone")
+                                Text("一键复制到 iPhone 剪贴板")
                             }
                             .font(.caption.bold())
                             .frame(maxWidth: .infinity)
@@ -253,6 +257,7 @@ struct PasteLinkLiveActivityWidget: Widget {
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                         }
+                        .buttonStyle(.plain)
                         .padding(.horizontal, 8)
                         .padding(.bottom, 4)
                     }
@@ -301,8 +306,8 @@ struct PasteLinkLiveActivityWidget: Widget {
 
             Spacer()
 
-            // 点击锁屏卡片右侧按钮，跳转快捷指令执行
-            Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+            // 点击锁屏卡片右侧按钮，原地执行复制
+            Button(intent: CopyFromWidgetIntent()) {
                 Image(systemName: "arrow.down.doc.fill")
                     .font(.body.bold())
                     .padding(10)
@@ -310,6 +315,7 @@ struct PasteLinkLiveActivityWidget: Widget {
                     .foregroundStyle(.white)
                     .clipShape(Circle())
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -417,16 +423,17 @@ struct PasteLinkCopyWidgetView: View {
     var body: some View {
         switch family {
         case .accessoryCircular:
-            Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+            Button(intent: CopyFromWidgetIntent()) {
                 ZStack {
                     AccessoryWidgetBackground()
                     Image(systemName: "arrow.down.doc.fill")
                         .font(.title3)
                 }
             }
+            .buttonStyle(.plain)
 
         case .accessoryRectangular:
-            Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+            Button(intent: CopyFromWidgetIntent()) {
                 VStack(alignment: .leading, spacing: 2) {
                     Label("一键复制 Windows", systemImage: "arrow.down.doc.fill")
                         .font(.caption2.bold())
@@ -435,6 +442,7 @@ struct PasteLinkCopyWidgetView: View {
                         .lineLimit(2)
                 }
             }
+            .buttonStyle(.plain)
 
         case .systemSmall:
             VStack(alignment: .leading, spacing: 8) {
@@ -454,7 +462,7 @@ struct PasteLinkCopyWidgetView: View {
 
                 Spacer()
 
-                Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+                Button(intent: CopyFromWidgetIntent()) {
                     Label("复制到手机", systemImage: "doc.on.clipboard.fill")
                         .font(.caption.bold())
                         .frame(maxWidth: .infinity)
@@ -463,9 +471,9 @@ struct PasteLinkCopyWidgetView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
+                .buttonStyle(.plain)
             }
             .padding()
-            .widgetURL(PasteLinkShortcutHelper.copyShortcutURL)
 
         default:
             VStack(alignment: .leading, spacing: 8) {
@@ -489,7 +497,7 @@ struct PasteLinkCopyWidgetView: View {
 
                 Spacer()
 
-                Link(destination: PasteLinkShortcutHelper.copyShortcutURL) {
+                Button(intent: CopyFromWidgetIntent()) {
                     Label("一键复制到 iPhone 剪贴板", systemImage: "doc.on.clipboard.fill")
                         .font(.subheadline.bold())
                         .frame(maxWidth: .infinity)
@@ -498,6 +506,7 @@ struct PasteLinkCopyWidgetView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
+                .buttonStyle(.plain)
             }
             .padding()
         }
@@ -532,16 +541,17 @@ struct PasteLinkPushWidgetView: View {
     var body: some View {
         switch family {
         case .accessoryCircular:
-            Link(destination: PasteLinkShortcutHelper.pushShortcutURL) {
+            Button(intent: PushFromWidgetIntent()) {
                 ZStack {
                     AccessoryWidgetBackground()
                     Image(systemName: "paperplane.fill")
                         .font(.title3)
                 }
             }
+            .buttonStyle(.plain)
 
         case .accessoryRectangular:
-            Link(destination: PasteLinkShortcutHelper.pushShortcutURL) {
+            Button(intent: PushFromWidgetIntent()) {
                 VStack(alignment: .leading, spacing: 2) {
                     Label("推送到 Windows", systemImage: "paperplane.fill")
                         .font(.caption2.bold())
@@ -551,6 +561,7 @@ struct PasteLinkPushWidgetView: View {
                         .lineLimit(2)
                 }
             }
+            .buttonStyle(.plain)
 
         case .systemSmall:
             VStack(alignment: .leading, spacing: 8) {
@@ -570,7 +581,7 @@ struct PasteLinkPushWidgetView: View {
 
                 Spacer()
 
-                Link(destination: PasteLinkShortcutHelper.pushShortcutURL) {
+                Button(intent: PushFromWidgetIntent()) {
                     Label("推送到电脑", systemImage: "paperplane.fill")
                         .font(.caption.bold())
                         .frame(maxWidth: .infinity)
@@ -579,9 +590,9 @@ struct PasteLinkPushWidgetView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
+                .buttonStyle(.plain)
             }
             .padding()
-            .widgetURL(PasteLinkShortcutHelper.pushShortcutURL)
 
         default:
             VStack(alignment: .leading, spacing: 8) {
@@ -605,7 +616,7 @@ struct PasteLinkPushWidgetView: View {
 
                 Spacer()
 
-                Link(destination: PasteLinkShortcutHelper.pushShortcutURL) {
+                Button(intent: PushFromWidgetIntent()) {
                     Label("一键推送到 Windows 剪贴板", systemImage: "paperplane.fill")
                         .font(.subheadline.bold())
                         .frame(maxWidth: .infinity)
@@ -614,6 +625,7 @@ struct PasteLinkPushWidgetView: View {
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
+                .buttonStyle(.plain)
             }
             .padding()
         }

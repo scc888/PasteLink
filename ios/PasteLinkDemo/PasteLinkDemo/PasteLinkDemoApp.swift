@@ -20,15 +20,7 @@ struct PasteLinkDemoApp: App {
                     }
                 }
                 .onOpenURL { url in
-                    // 1. 处理快捷指令外部跳转转发
-                    // 说明：iOS WidgetKit / ActivityKit 沙盒规定点击 URL 必须由宿主主 App 统一接收路由。
-                    // 接收到 shortcuts:// 链接后，直接调用系统 open 立即拉起快捷指令执行。
-                    if url.scheme == "shortcuts" || url.absoluteString.hasPrefix("shortcuts://") {
-                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                        return
-                    }
-
-                    // 2. 处理 pastelink 自定义直达协议
+                    // 处理 pastelink 自定义直达协议
                     if url.scheme == "pastelink" {
                         if url.host == "copy" || url.path == "/copy" {
                             let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
