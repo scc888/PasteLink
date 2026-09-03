@@ -64,7 +64,6 @@ final class PasteLinkStore: ObservableObject {
     static let shared = PasteLinkStore()
 
     private let appGroupID = "group.com.pastelink.shared"
-    private let maxHistoryCount = 50
     private let maxDedupCount = 60
 
     private var defaults: UserDefaults {
@@ -73,10 +72,36 @@ final class PasteLinkStore: ObservableObject {
 
     @Published var history: [ClipboardItem] = []
     @Published var pairedPIN: String = ""
+    @Published var maxHistoryCount: Int = 10
 
     private init() {
+        let storedLimit = defaults.integer(forKey: "maxHistoryCount")
+        self.maxHistoryCount = storedLimit > 0 ? storedLimit : 10
         self.history = getHistory()
         self.pairedPIN = getPairingPIN()
+    }
+
+    // MARK: - 历史记录上限配置
+
+    func setMaxHistoryCount(_ count: Int) {
+        let validCount = max(5, count)
+        defaults.set(validCount, forKey: "maxHistoryCount")
+        DispatchQueue.main.async {
+            self.maxHistoryCount = validCount
+            self.trimHistoryToLimit()
+        }
+    }
+
+    private func trimHistoryToLimit() {
+        var items = getHistory()
+        while items.count > maxHistoryCount {
+            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
+                items.remove(at: lastUnpinnedIndex)
+            } else {
+                break
+            }
+        }
+        saveHistoryToDisk(items)
     }
 
     // MARK: - 防回环去重 (SHA-256 Fingerprint Pool)
@@ -130,9 +155,11 @@ final class PasteLinkStore: ObservableObject {
         items.insert(newItem, at: 0)
 
         // 限制非置顶条目上限
-        if items.count > maxHistoryCount {
+        while items.count > maxHistoryCount {
             if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
                 items.remove(at: lastUnpinnedIndex)
+            } else {
+                break
             }
         }
 
@@ -153,9 +180,11 @@ final class PasteLinkStore: ObservableObject {
         items.removeAll { $0.sha256 == item.sha256 }
         items.insert(newItem, at: 0)
 
-        if items.count > maxHistoryCount {
+        while items.count > maxHistoryCount {
             if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
                 items.remove(at: lastUnpinnedIndex)
+            } else {
+                break
             }
         }
 

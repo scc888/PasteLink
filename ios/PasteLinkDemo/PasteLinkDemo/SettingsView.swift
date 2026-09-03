@@ -18,13 +18,16 @@ struct SettingsView: View {
                 // 2. 端到端加密设置
                 securitySection
 
-                // 3. 隐私与数据安全
+                // 3. 剪贴板历史记录设置
+                historySection
+
+                // 4. 隐私与数据安全
                 privacySection
 
-                // 4. 实时调试日志
+                // 5. 实时调试日志
                 debugLogSection
 
-                // 5. 关于与版本
+                // 6. 关于与版本
                 aboutSection
             }
             .navigationTitle("设置")
@@ -106,7 +109,41 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 3. 隐私与数据
+    // MARK: - 3. 历史记录设置
+
+    private var historySection: some View {
+        Section {
+            Picker("历史记录上限", selection: Binding(
+                get: { store.maxHistoryCount },
+                set: { store.setMaxHistoryCount($0) }
+            )) {
+                Text("5 条").tag(5)
+                Text("10 条 (默认)").tag(10)
+                Text("20 条").tag(20)
+                Text("30 条").tag(30)
+                Text("50 条").tag(50)
+            }
+
+            Button(role: .destructive) {
+                store.clearHistory()
+            } label: {
+                HStack {
+                    Label("清空所有历史记录", systemImage: "trash")
+                        .foregroundStyle(.red)
+                    Spacer()
+                    Text("\(store.history.count) 条")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("剪贴板历史")
+        } footer: {
+            Text("超出设定上限时将自动淘汰最旧的未收藏记录。已置顶/收藏（📌）的条目不受上限限制，始终保留。")
+        }
+    }
+
+    // MARK: - 4. 隐私与数据
 
     private var privacySection: some View {
         Section("隐私保护 (Local-First)") {
