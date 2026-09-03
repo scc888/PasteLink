@@ -230,7 +230,7 @@ struct PasteFromWindowsIntent: AppIntent {
 
 // MARK: - 4. 小组件与灵动岛点击 Intent (兜底与界面触发)
 
-/// 小组件点击复制 Intent
+/// 小组件点击复制 Intent (拉起主 App 执行以获取合法 UIPasteboard 前台写入权限)
 struct CopyFromWidgetIntent: AppIntent {
 
     static var title: LocalizedStringResource = "复制 Windows 剪贴板"
@@ -239,7 +239,7 @@ struct CopyFromWidgetIntent: AppIntent {
         "从小组件中一键将 Windows 剪贴板内容写入 iPhone 剪贴板"
     )
 
-    static var openAppWhenRun: Bool = false
+    static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
@@ -259,7 +259,7 @@ struct CopyFromWidgetIntent: AppIntent {
     }
 }
 
-/// 小组件点击推送 Intent
+/// 小组件点击推送 Intent (拉起主 App 执行以获取合法 UIPasteboard 读取权限)
 struct PushFromWidgetIntent: AppIntent {
 
     static var title: LocalizedStringResource = "推送到 Windows 剪贴板"
@@ -268,7 +268,7 @@ struct PushFromWidgetIntent: AppIntent {
         "从小组件中一键将 iPhone 剪贴板推送到 Windows"
     )
 
-    static var openAppWhenRun: Bool = false
+    static var openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         var clipText = ""
@@ -303,7 +303,7 @@ struct CopyFromLiveActivityIntent: LiveActivityIntent {
 
     static var title: LocalizedStringResource = "从灵动岛复制"
 
-    static var openAppWhenRun: Bool = false
+    static var openAppWhenRun: Bool = true
 
     @Parameter(title: "待复制文本")
     var text: String?
