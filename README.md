@@ -1,5 +1,9 @@
 # PasteLink · 跨设备通用剪贴板 (iPhone ↔ Windows)
 
+[![Release](https://img.shields.io/github/v/release/scc888/PasteLink?color=blue&label=Release)](https://github.com/scc888/PasteLink/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20iOS-lightgrey.svg)]()
+
 > **极简、极速、无云端依赖（Local-First）的 iPhone 与 Windows 跨端极速剪贴板。**  
 > 电脑端 `100% 无感`（Ctrl+C 自动同步 / 自动写剪贴板），手机端 `最多一次操作`（Action Button / 灵动岛 / 控制中心 / 快捷指令一键直达）。
 
@@ -75,3 +79,10 @@ npm run tauri dev
 1. 在 Mac 上使用 Xcode 打开独立工程：[`ios/PasteLinkApp/PasteLink.xcodeproj`](file:///D:/PasteLink/ios/PasteLinkApp/PasteLink.xcodeproj)；
 2. 确认已配置个人开发者签名（Signing & Capabilities）；
 3. 连接 iPhone 真机，点击 **Run** 即可运行全新的消费级 PasteLink App！
+
+---
+
+## 📄 开源许可证
+
+本项目基于 [MIT License](file:///D:/PasteLink/LICENSE) 协议开源。
+
