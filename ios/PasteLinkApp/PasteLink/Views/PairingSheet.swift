@@ -160,7 +160,7 @@ struct PairingSheet: View {
                 }
             }
             .onAppear {
-                let currentPin = PasteLinkStore.shared.getPairingPIN()
+                let currentPin = PasteLinkStore.shared.getLastEnteredPIN()
                 if currentPin.count == 6 {
                     fullPinText = currentPin
                 }
@@ -186,6 +186,9 @@ struct PairingSheet: View {
         isVerifying = true
         errorMessage = nil
 
+        // 立即记录为最近输入的配对码，确保重启或意外退出也不会丢失
+        PasteLinkStore.shared.savePairingPIN(pin)
+
         Task {
             let (success, message) = await BluetoothManager.shared.verifyPairingPIN(candidatePin: pin)
 
@@ -204,13 +207,12 @@ struct PairingSheet: View {
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                     self.errorMessage = message
 
-                    // 错误抖动反馈并清空输入
+                    // 错误抖动反馈，但保留用户已输入的配对码，绝不强制清空
                     withAnimation(.easeInOut(duration: 0.08).repeatCount(4, autoreverses: true)) {
                         self.shakeOffset = 8
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                         self.shakeOffset = 0
-                        self.fullPinText = ""
                         self.isFieldFocused = true
                     }
                 }

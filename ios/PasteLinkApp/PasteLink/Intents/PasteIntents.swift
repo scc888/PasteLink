@@ -107,11 +107,11 @@ struct SendToWindowsIntent: AppIntent {
             return .result()
         }
 
-        // 存入 App Group 缓存
+        // 存入 App Group 跨进程共享缓存
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
         defaults.set(targetText, forKey: "pendingSendToWindows")
 
-        // 通过 Darwin Notification 通知主 App 后台 BLE 服务立即发送
+        // 通过 Darwin Notification 通知主 App 进程立即投递 BLE 剪贴板包
         let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),

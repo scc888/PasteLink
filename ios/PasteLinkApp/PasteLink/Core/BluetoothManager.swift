@@ -96,6 +96,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var pendingAuthPIN: String?
     private var pendingChallengeID: String?
 
+    /// BLE 分片切片与重组协议
+    private let chunkReassembler = BLEChunkReassembler()
+    private var rollingMsgId: UInt8 = 1
+
     // MARK: - 初始化
 
     override init() {
@@ -147,12 +151,11 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
 
         connectionState = .scanning
-        statusText = "正在扫描附近的蓝牙设备..."
+        statusText = "正在扫描附近的 PasteLink 电脑..."
         discoveredDevices.removeAll()
-        addLog("🔍 开始全量 BLE 扫描...")
+        addLog("🔍 开始扫描 PasteLink 电脑...")
 
-        // 注意: Windows BLE 广播可能因包大小无法包含 128-bit UUID，
-        // 故在此使用 withServices: nil 进行全量扫描，并在发现时进行名称与服务匹配
+        // 注意: Windows BLE 广播可能因包大小限制，在此使用 withServices: nil 全量接收并在发现时严格匹配 PasteLink 专属服务与特征
         centralManager.scanForPeripherals(
             withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
@@ -164,8 +167,8 @@ final class BluetoothManager: NSObject, ObservableObject {
             self.centralManager.stopScan()
             if self.discoveredDevices.isEmpty {
                 self.connectionState = .disconnected
-                self.statusText = "未找到设备 (请检查电脑端)"
-                self.addLog("⏱️ 扫描超时，未发现设备")
+                self.statusText = "未找到 PasteLink 电脑 (请确保电脑端运行)"
+                self.addLog("⏱️ 扫描超时，未发现本程序电脑")
             } else {
                 self.statusText = "扫描完成，请在下方选择电脑连接"
             }
@@ -202,7 +205,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
     }
 
-    /// 向 Windows 发送文本 (自动使用 AES-256-GCM 加密)
+    /// 向 Windows 发送文本 (自动使用 AES-256-GCM 加密与安全 MTU 分片)
     func sendToWindows(text: String) {
         guard let peripheral = connectedPeripheral,
               let characteristic = writeCharacteristic
@@ -223,8 +226,14 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
 
         let item = PasteLinkStore.shared.saveSentItem(text: text)
-        peripheral.writeValue(encryptedData, for: characteristic, type: .withResponse)
-        addLog("📤 [加密] 已发送 \(encryptedData.count) 字节 [SHA: \(item.sha256.prefix(8))]")
+        let msgId = rollingMsgId
+        rollingMsgId = rollingMsgId &+ 1
+        let chunks = BLEChunkProtocol.fragment(data: encryptedData, msgId: msgId)
+
+        for chunk in chunks {
+            peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+        }
+        addLog("📤 [分片加密] 已发送 \(encryptedData.count) 字节 (\(chunks.count) 分片) [SHA: \(item.sha256.prefix(8))]")
     }
 
     /// 直接发送文本 (供 App Intent / 快捷指令调用，支持异步发送与自动重连排队)
@@ -251,8 +260,14 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
 
         let item = PasteLinkStore.shared.saveSentItem(text: text)
-        peripheral.writeValue(encryptedData, for: characteristic, type: .withResponse)
-        addLog("📤 [快捷指令/加密] 已推送到 Windows [SHA: \(item.sha256.prefix(8))]")
+        let msgId = rollingMsgId
+        rollingMsgId = rollingMsgId &+ 1
+        let chunks = BLEChunkProtocol.fragment(data: encryptedData, msgId: msgId)
+
+        for chunk in chunks {
+            peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+        }
+        addLog("📤 [快捷指令/分片加密] 已推送到 Windows (\(chunks.count) 分片) [SHA: \(item.sha256.prefix(8))]")
         return true
     }
 
@@ -350,34 +365,36 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = peripheral.name ?? localName ?? "未知设备"
         let advertisedServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
-        let hasOurService = advertisedServices.contains(Self.serviceUUID)
+        let overflowServices = (advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID]) ?? []
+        let hasOurService = advertisedServices.contains(Self.serviceUUID) || overflowServices.contains(Self.serviceUUID)
+        let isPasteLinkProgram = hasOurService || name.localizedCaseInsensitiveContains("pastelink")
 
-        addLog("📡 发现: \(name) (RSSI: \(RSSI), UUID: \(hasOurService ? "包含" : "无"))")
-
-        // 如果广播包里明确包含 PasteLink 服务 UUID，自动直连
-        if hasOurService {
-            addLog("🎯 匹配到 PasteLink UUID，自动连接 \(name)")
-            connect(to: peripheral)
+        // 仅识别由本程序广播的 PasteLink 电脑，彻底过滤周边所有无关蓝牙设备 (耳机/电视/手环等)
+        guard isPasteLinkProgram else {
             return
         }
 
-        // 否则加入待选列表
+        addLog("📡 发现 PasteLink 电脑: \(name) (RSSI: \(RSSI))")
+
+        // 将本程序电脑加入/更新到专属设备列表
         DispatchQueue.main.async {
+            let device = DiscoveredDevice(
+                peripheral: peripheral,
+                name: name,
+                rssi: RSSI.intValue,
+                isPasteLinkCandidate: true
+            )
             if let index = self.discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-                self.discoveredDevices[index] = DiscoveredDevice(
-                    peripheral: peripheral,
-                    name: name,
-                    rssi: RSSI.intValue,
-                    isPasteLinkCandidate: hasOurService
-                )
+                self.discoveredDevices[index] = device
             } else {
-                self.discoveredDevices.append(DiscoveredDevice(
-                    peripheral: peripheral,
-                    name: name,
-                    rssi: RSSI.intValue,
-                    isPasteLinkCandidate: hasOurService
-                ))
+                self.discoveredDevices.append(device)
             }
+        }
+
+        // 若处于扫描状态且非手动断开，自动直连
+        if (connectionState == .scanning || connectionState == .disconnected) && !isManualDisconnect && connectedPeripheral == nil {
+            addLog("🎯 自动发起连接 PasteLink 电脑: \(name)")
+            connect(to: peripheral)
         }
     }
 
@@ -540,7 +557,12 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
 
-        guard let data = characteristic.value else { return }
+        guard let rawData = characteristic.value else { return }
+
+        // 经过分片重组器进行拼包
+        guard let data = chunkReassembler.process(packet: rawData) else {
+            return
+        }
 
         // 1. 优先检查是否处于配对校验握手响应流程中
         if let cont = pendingAuthContinuation, let authPin = pendingAuthPIN, let challengeID = pendingChallengeID {
@@ -602,7 +624,7 @@ extension BluetoothManager: CBPeripheralDelegate {
         // 2. 刷新所有桌面与锁屏小组件
         WidgetCenter.shared.reloadAllTimelines()
 
-        // 3. 触发灵动岛 / 锁屏实时活动
+        // 3. 触发灵动岛 / 锁屏实时活动 (若用户在快捷形态中开启)
         LiveActivityManager.shared.showLiveActivity(
             text: text,
             deviceName: self.connectedDeviceName ?? "Windows 电脑"

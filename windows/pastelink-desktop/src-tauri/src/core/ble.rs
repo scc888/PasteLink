@@ -141,6 +141,8 @@ impl BleServer {
         let rx_channel = Arc::new(on_receive_tx);
         let state_for_write = state.clone();
         let notify_char_for_write = notify_char.clone();
+        let reassembler = Arc::new(std::sync::Mutex::new(crate::core::protocol::ChunkReassembler::new()));
+
         write_char.WriteRequested(&TypedEventHandler::new(
             move |_char: &Option<GattLocalCharacteristic>,
                   args: &Option<GattWriteRequestedEventArgs>| {
@@ -155,35 +157,42 @@ impl BleServer {
                         let mut buf = vec![0u8; len as usize];
                         reader.ReadBytes(&mut buf)?;
 
-                        let pin = state_for_write.pairing_code.lock().unwrap().clone();
-                        let key = crate::core::crypto::CryptoEngine::derive_key(&pin);
+                        let full_payload_opt = {
+                            let mut r = reassembler.lock().unwrap();
+                            r.process_packet(&buf)
+                        };
 
-                        if let Ok(text) = crate::core::crypto::CryptoEngine::decrypt(&buf, &key) {
-                            if !text.is_empty() {
-                                if text.starts_with("PLK_AUTH_CHALLENGE:") {
-                                    let challenge_id = text.strip_prefix("PLK_AUTH_CHALLENGE:").unwrap_or_default();
-                                    log::info!("[BLE 🔐 配对握手] 收到来自 iPhone 的配对校验请求: {}", challenge_id);
-                                    let ack_text = format!("PLK_AUTH_SUCCESS:{}", challenge_id);
-                                    if let Ok(ack_packet) = crate::core::crypto::CryptoEngine::encrypt(&ack_text, &key) {
-                                        if let Ok(writer) = DataWriter::new() {
-                                            let _ = writer.WriteBytes(&ack_packet);
-                                            if let Ok(buffer) = writer.DetachBuffer() {
-                                                let _ = notify_char_for_write.NotifyValueAsync(&buffer);
-                                                log::info!("[BLE 🔐 配对握手] 已向 iPhone 回复认证成功确认包");
+                        if let Some(full_payload) = full_payload_opt {
+                            let pin = state_for_write.pairing_code.lock().unwrap().clone();
+                            let key = crate::core::crypto::CryptoEngine::derive_key(&pin);
+
+                            if let Ok(text) = crate::core::crypto::CryptoEngine::decrypt(&full_payload, &key) {
+                                if !text.is_empty() {
+                                    if text.starts_with("PLK_AUTH_CHALLENGE:") {
+                                        let challenge_id = text.strip_prefix("PLK_AUTH_CHALLENGE:").unwrap_or_default();
+                                        log::info!("[BLE 🔐 配对握手] 收到来自 iPhone 的配对校验请求: {}", challenge_id);
+                                        let ack_text = format!("PLK_AUTH_SUCCESS:{}", challenge_id);
+                                        if let Ok(ack_packet) = crate::core::crypto::CryptoEngine::encrypt(&ack_text, &key) {
+                                            if let Ok(writer) = DataWriter::new() {
+                                                let _ = writer.WriteBytes(&ack_packet);
+                                                if let Ok(buffer) = writer.DetachBuffer() {
+                                                    let _ = notify_char_for_write.NotifyValueAsync(&buffer);
+                                                    log::info!("[BLE 🔐 配对握手] 已向 iPhone 回复认证成功确认包");
+                                                }
                                             }
                                         }
+                                    } else {
+                                        let _ = rx_channel.send(text);
                                     }
-                                } else {
-                                    let _ = rx_channel.send(text);
                                 }
-                            }
-                        } else {
-                            log::warn!("[BLE] 收到无效或未授权加密载荷 (配对码不匹配)");
-                            let fail_text = "PLK_AUTH_FAILED";
-                            if let Ok(writer) = DataWriter::new() {
-                                let _ = writer.WriteBytes(fail_text.as_bytes());
-                                if let Ok(buffer) = writer.DetachBuffer() {
-                                    let _ = notify_char_for_write.NotifyValueAsync(&buffer);
+                            } else {
+                                log::warn!("[BLE] 收到无效或未授权加密载荷 (配对码不匹配)");
+                                let fail_text = "PLK_AUTH_FAILED";
+                                if let Ok(writer) = DataWriter::new() {
+                                    let _ = writer.WriteBytes(fail_text.as_bytes());
+                                    if let Ok(buffer) = writer.DetachBuffer() {
+                                        let _ = notify_char_for_write.NotifyValueAsync(&buffer);
+                                    }
                                 }
                             }
                         }
@@ -216,7 +225,7 @@ impl BleServer {
         })
     }
 
-    /// 向 iPhone 推送加密剪贴板内容
+    /// 向 iPhone 推送加密剪贴板内容（支持自动安全分包切片）
     pub fn notify_clipboard(&self, text: &str, pin: &str) -> Result<u32> {
         let subscribers = self.notify_char.SubscribedClients()?;
         let count = subscribers.Size()?;
@@ -233,14 +242,32 @@ impl BleServer {
             anyhow::bail!("密文载荷过大 ({} 字节)，限制 64KB", payload.len());
         }
 
-        let writer = DataWriter::new()?;
-        writer.WriteBytes(&payload)?;
-        let buffer = writer.DetachBuffer()?;
+        // 2. 切片为 BLE MTU 安全分包
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static MSG_COUNTER: AtomicU8 = AtomicU8::new(1);
+        let msg_id = MSG_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let chunks = crate::core::protocol::fragment_payload(&payload, msg_id);
 
-        self.notify_char
-            .NotifyValueAsync(&buffer)?
-            .get()
-            .context("BLE Notify 投递失败")?;
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let writer = DataWriter::new()?;
+            writer.WriteBytes(chunk)?;
+            let buffer = writer.DetachBuffer()?;
+
+            self.notify_char
+                .NotifyValueAsync(&buffer)?
+                .get()
+                .context("BLE Notify 投递失败")?;
+
+            if chunks.len() > 1 && idx < chunks.len() - 1 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        log::info!(
+            "[BLE → iPhone] 已推送数据 ({} 字节, {} 个切片分包)",
+            payload.len(),
+            chunks.len()
+        );
 
         Ok(count)
     }

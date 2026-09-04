@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -47,6 +47,9 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<ClipboardItem | null>(null);
   const [copiedPin, setCopiedPin] = useState(false);
   const [isRefreshingPin, setIsRefreshingPin] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number>(0);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -298,6 +301,56 @@ export default function App() {
       });
   }, [status.recent_items, filterType, searchQuery]);
 
+  // 键盘导航与回车复制
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [searchQuery, filterType]);
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 60);
+    }
+  }, [isSettingsOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (selectedItem) {
+          setSelectedItem(null);
+        } else if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+        } else {
+          handleClose();
+        }
+        return;
+      }
+
+      if (isSettingsOpen) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.min(prev + 1, Math.max(0, filteredItems.length - 1)));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.max(0, prev - 1));
+      } else if (e.key === "Enter") {
+        if (selectedItem) {
+          handleCopy(selectedItem);
+          setSelectedItem(null);
+          handleClose();
+        } else if (filteredItems.length > 0 && filteredItems[selectedIndex]) {
+          handleCopy(filteredItems[selectedIndex]);
+          handleClose();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedItem, isSettingsOpen, filteredItems, selectedIndex]);
+
   return (
     <div className="flyout-container">
       {/* 顶部标题栏 */}
@@ -480,8 +533,9 @@ export default function App() {
             <div className="search-box">
               <Search size={13} className="search-icon" />
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="搜索剪贴板历史..."
+                placeholder="搜索剪贴板历史 (↑↓选择 · Enter复制)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -530,6 +584,9 @@ export default function App() {
                   ? `搜索结果 (${filteredItems.length})`
                   : "最近同步流"}
               </span>
+              <span style={{ fontSize: "10px", color: "var(--text-dim)", marginLeft: "auto", marginRight: "8px" }}>
+                ↑↓ 选择 · ↵ 复制
+              </span>
               {status.recent_items.length > 0 && (
                 <button
                   className="icon-btn micro-btn"
@@ -544,23 +601,49 @@ export default function App() {
             <div className="history-list">
               {filteredItems.length === 0 ? (
                 <div className="empty-state">
-                  <ClipboardList size={34} className="empty-icon" />
-                  <span className="empty-title">
-                    {searchQuery ? "未找到匹配记录" : "暂无剪贴板同步"}
-                  </span>
-                  <span className="empty-desc">
-                    {searchQuery
-                      ? "请尝试不同的关键词"
-                      : "在 Windows 按 Ctrl+C 或在 iPhone 复制即可瞬间同步"}
-                  </span>
+                  {searchQuery ? (
+                    <>
+                      <ClipboardList size={34} className="empty-icon" />
+                      <span className="empty-title">未找到匹配记录</span>
+                      <span className="empty-desc">请尝试不同的关键词</span>
+                    </>
+                  ) : status.connected_devices === 0 ? (
+                    <div className="onboarding-guide">
+                      <div className="onboarding-badge">🚀 首次连接快速指南</div>
+                      <div className="onboarding-steps">
+                        <div className="onboarding-step">
+                          <span className="step-num">1</span>
+                          <span>在 iPhone 打开 PasteLink 应用</span>
+                        </div>
+                        <div className="onboarding-step">
+                          <span className="step-num">2</span>
+                          <span>手机将通过蓝牙自动发现此电脑并连接</span>
+                        </div>
+                        <div className="onboarding-step">
+                          <span className="step-num">3</span>
+                          <span>在手机上输入上方 6 位安全配对 PIN 码</span>
+                        </div>
+                      </div>
+                      <span className="onboarding-tip">配对后，电脑按 Ctrl+C 即可瞬间同步至手机！</span>
+                    </div>
+                  ) : (
+                    <>
+                      <ClipboardList size={34} className="empty-icon" />
+                      <span className="empty-title">设备已连接，等待同步</span>
+                      <span className="empty-desc">在电脑按 Ctrl+C 或在手机复制文字即可瞬间双向同步</span>
+                    </>
+                  )}
                 </div>
               ) : (
-                filteredItems.map((item) => (
+                filteredItems.map((item, index) => (
                   <div
                     key={item.id}
-                    className={`clip-card ${item.is_pinned ? "pinned" : ""}`}
+                    className={`clip-card ${item.is_pinned ? "pinned" : ""} ${
+                      index === selectedIndex ? "active-selected" : ""
+                    }`}
                     onClick={() => handleCopy(item)}
-                    title="点击复制到剪贴板"
+                    onMouseEnter={() => setSelectedIndex(index)}
+                    title="点击或按 Enter 复制到剪贴板"
                   >
                     <div className="clip-meta">
                       <div className="clip-meta-left">

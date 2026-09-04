@@ -62,8 +62,11 @@ PasteLink/
 
 ### 1. Windows 客户端
 
-* **独立安装包直装 (推荐)**：
-  - 运行安装程序：[`release/PasteLink_1.0.0_Windows_x64_Setup.exe`](file:///D:/PasteLink/release/PasteLink_1.0.0_Windows_x64_Setup.exe) (仅 2.4MB)
+* **绿色免安装便携版 (即点即用，推荐)**：
+  - 直接运行单文件程序：[`release/PasteLink_Portable_x64.exe`](file:///D:/PasteLink/release/PasteLink_Portable_x64.exe) (零语言/运行库依赖，免安装)
+
+* **标准安装包直装**：
+  - 运行安装程序：[`release/PasteLink_1.0.0_Windows_x64_Setup.exe`](file:///D:/PasteLink/release/PasteLink_1.0.0_Windows_x64_Setup.exe) (仅 2.5MB)
   - 或使用 MSI 安装包：[`release/PasteLink_1.0.0_Windows_x64.msi`](file:///D:/PasteLink/release/PasteLink_1.0.0_Windows_x64.msi)
 
 * **源码启动开发版**：

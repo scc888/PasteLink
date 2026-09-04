@@ -78,7 +78,8 @@ final class PasteLinkStore: ObservableObject {
         let storedLimit = defaults.integer(forKey: "maxHistoryCount")
         self.maxHistoryCount = storedLimit > 0 ? storedLimit : 10
         self.history = getHistory()
-        self.pairedPIN = getPairingPIN()
+        let pin = getPairingPIN()
+        self.pairedPIN = pin.isEmpty ? getLastEnteredPIN() : pin
     }
 
     // MARK: - 历史记录上限配置
@@ -120,15 +121,42 @@ final class PasteLinkStore: ObservableObject {
         return false
     }
 
-    // MARK: - 配对 PIN 码管理
+    // MARK: - 配对 PIN 码管理与最近一次记忆
 
     func getPairingPIN() -> String {
-        defaults.string(forKey: "pairedPIN") ?? ""
+        if let pin = defaults.string(forKey: "pairedPIN"), !pin.isEmpty {
+            return pin
+        }
+        if let pin = UserDefaults.standard.string(forKey: "pairedPIN"), !pin.isEmpty {
+            return pin
+        }
+        return getLastEnteredPIN()
+    }
+
+    func getLastEnteredPIN() -> String {
+        if let last = defaults.string(forKey: "lastEnteredPIN"), !last.isEmpty {
+            return last
+        }
+        if let last = UserDefaults.standard.string(forKey: "lastEnteredPIN"), !last.isEmpty {
+            return last
+        }
+        return ""
     }
 
     func savePairingPIN(_ pin: String) {
         let clean = pin.replacingOccurrences(of: " ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // 1. 同步保存到 App Group 与 Standard 双通道，确保免证书沙盒环境下也能持久化
         defaults.set(clean, forKey: "pairedPIN")
+        defaults.synchronize()
+        UserDefaults.standard.set(clean, forKey: "pairedPIN")
+        UserDefaults.standard.synchronize()
+
+        // 2. 只要输入过 6 位有效数字，即记录为最近一次输入，防止任何意外清空导致下次重新输入
+        if clean.count == 6 {
+            defaults.set(clean, forKey: "lastEnteredPIN")
+            UserDefaults.standard.set(clean, forKey: "lastEnteredPIN")
+        }
+
         DispatchQueue.main.async {
             self.pairedPIN = clean
         }

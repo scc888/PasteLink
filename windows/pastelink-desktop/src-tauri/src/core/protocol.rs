@@ -86,6 +86,92 @@ pub fn make_preview(text: &str, max_chars: usize) -> String {
     }
 }
 
+// ─── BLE 分片传输协议 (64KB 长文本安全保障) ───────────────────
+
+pub const CHUNK_MAGIC: &[u8; 4] = b"PLKC";
+pub const MAX_CHUNK_PAYLOAD: usize = 480;
+
+/// 将任意大小的密文载荷切片为符合 BLE MTU 的安全分片包
+///
+/// 分片包头格式: `[PLKC (4B)] + [msg_id (1B)] + [total_chunks (1B)] + [chunk_index (1B)] + [flags (1B)] + [payload (<=480B)]`
+pub fn fragment_payload(data: &[u8], msg_id: u8) -> Vec<Vec<u8>> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+    let total_chunks = ((data.len() + MAX_CHUNK_PAYLOAD - 1) / MAX_CHUNK_PAYLOAD) as u8;
+    let mut chunks = Vec::with_capacity(total_chunks as usize);
+
+    for (i, chunk_slice) in data.chunks(MAX_CHUNK_PAYLOAD).enumerate() {
+        let mut packet = Vec::with_capacity(8 + chunk_slice.len());
+        packet.extend_from_slice(CHUNK_MAGIC);
+        packet.push(msg_id);
+        packet.push(total_chunks);
+        packet.push(i as u8);
+        packet.push(0); // flags/reserved
+        packet.extend_from_slice(chunk_slice);
+        chunks.push(packet);
+    }
+    chunks
+}
+
+/// BLE 分片重组状态机
+#[derive(Default)]
+pub struct ChunkReassembler {
+    current_msg_id: u8,
+    total_chunks: u8,
+    received_chunks: std::collections::HashMap<u8, Vec<u8>>,
+    last_update: Option<std::time::Instant>,
+}
+
+impl ChunkReassembler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 处理收到的分片。当所有分片接收完毕时返回完整 Payload，否则返回 None
+    pub fn process_packet(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
+        // 兼容单包非切片模式 (如旧版本 PLK1 密文或明文)
+        if packet.len() < 8 || &packet[0..4] != CHUNK_MAGIC {
+            return Some(packet.to_vec());
+        }
+
+        let msg_id = packet[4];
+        let total_chunks = packet[5];
+        let chunk_index = packet[6];
+        let payload = &packet[8..];
+
+        let now = std::time::Instant::now();
+        // 超过 4 秒超时或消息 ID 发生切换，丢弃之前未完成的陈旧分片
+        if let Some(last) = self.last_update {
+            if now.duration_since(last).as_secs() > 4 || msg_id != self.current_msg_id {
+                self.received_chunks.clear();
+            }
+        }
+
+        self.current_msg_id = msg_id;
+        self.total_chunks = total_chunks;
+        self.last_update = Some(now);
+        self.received_chunks.insert(chunk_index, payload.to_vec());
+
+        // 检查所有分片是否已经集齐
+        if self.received_chunks.len() == total_chunks as usize {
+            let mut full_payload = Vec::new();
+            for i in 0..total_chunks {
+                if let Some(chunk_data) = self.received_chunks.get(&i) {
+                    full_payload.extend_from_slice(chunk_data);
+                } else {
+                    return None;
+                }
+            }
+            self.received_chunks.clear();
+            self.last_update = None;
+            Some(full_payload)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +201,41 @@ mod tests {
         let preview = make_preview(text, 50);
         assert_eq!(preview, "Line 1 ↵ Line 2 ↵ Line 3");
     }
+
+    #[test]
+    fn test_ble_fragmentation_roundtrip() {
+        // 测试 2500 字节数据（需切片为 6 个分片包）
+        let raw_data = vec![0xAB; 2500];
+        let msg_id = 42;
+        let packets = fragment_payload(&raw_data, msg_id);
+        assert_eq!(packets.len(), 6);
+
+        let mut reassembler = ChunkReassembler::new();
+        let mut reassembled = None;
+
+        for (idx, packet) in packets.iter().enumerate() {
+            let res = reassembler.process_packet(packet);
+            if idx < 5 {
+                assert!(res.is_none(), "在集齐前不应返回完整数据");
+            } else {
+                reassembled = res;
+            }
+        }
+
+        assert_eq!(reassembled, Some(raw_data));
+    }
+
+    #[test]
+    fn test_ble_fragmentation_single_chunk() {
+        let raw_data = b"small payload".to_vec();
+        let packets = fragment_payload(&raw_data, 1);
+        assert_eq!(packets.len(), 1);
+
+        let mut reassembler = ChunkReassembler::new();
+        let result = reassembler.process_packet(&packets[0]);
+        assert_eq!(result, Some(raw_data));
+    }
 }
+
 
 

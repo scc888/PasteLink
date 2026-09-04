@@ -119,7 +119,7 @@ struct HardwareIntegrationView: View {
                 }
             }
         } header: {
-            Text("灵动岛通知形态")
+            Text("灵动岛与实时活动")
         }
     }
 

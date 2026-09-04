@@ -49,6 +49,11 @@ struct ClipboardFeedView: View {
                         isPairingSheetPresented = true
                     }
 
+                    // 1.5 发现附近的电脑设备待选区
+                    if bluetooth.connectionState != .connected && !bluetooth.discoveredDevices.isEmpty {
+                        discoveredDevicesSection
+                    }
+
                     // 2. 分类过滤标签栏
                     filterChipsSection
 
@@ -124,6 +129,63 @@ struct ClipboardFeedView: View {
                             .clipShape(Capsule())
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - 发现附近的蓝牙设备候选区
+
+    private var discoveredDevicesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("发现附近的 PasteLink 电脑 (点击连接)")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if bluetooth.connectionState == .scanning {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+            }
+
+            ForEach(bluetooth.discoveredDevices) { device in
+                HStack {
+                    Image(systemName: "laptopcomputer")
+                        .font(.title3)
+                        .foregroundStyle(device.isPasteLinkCandidate ? .blue : .secondary)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(device.name)
+                                .font(.subheadline.bold())
+                            if device.isPasteLinkCandidate {
+                                Text("PasteLink 电脑")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.15))
+                                    .foregroundStyle(.blue)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        Text("信号强度: \(device.rssi) dBm")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer()
+
+                    Button("连接") {
+                        bluetooth.connect(to: device.peripheral)
+                    }
+                    .font(.caption.bold())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .clipShape(Capsule())
+                }
+                .padding(12)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
         }
     }

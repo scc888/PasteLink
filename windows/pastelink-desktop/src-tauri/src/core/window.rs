@@ -13,10 +13,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
 };
 #[cfg(windows)]
-use windows::Win32::UI::Shell::{
-    SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA,
-};
-#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, MSG, WM_HOTKEY,
 };
@@ -63,42 +59,45 @@ impl WindowEffectManager {
     #[cfg(not(windows))]
     pub fn apply_fluent_effects(_window: &WebviewWindow) {}
 
-    /// 智能将浮窗定位在任务栏与托盘上方（支持多显示器、DPI自适应与任务栏位置探测）
+    /// 智能将浮窗定位在主屏幕右下角任务栏托盘正上方（支持多显示器、DPI自适应与屏幕边界严格钳位）
     pub fn position_tray_window(window: &WebviewWindow) {
-        if let Ok(Some(monitor)) = window.current_monitor() {
+        // 核心：优先使用系统主显示器 (primary_monitor)！
+        // Windows 系统的主要任务栏和托盘时钟始终位于主显示器，彻底杜绝浮窗跨屏跑到副屏！
+        let monitor = window
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| window.current_monitor().ok().flatten());
+
+        if let Some(monitor) = monitor {
+            let scale = monitor.scale_factor();
             let screen_size = monitor.size();
-            let scale_factor = monitor.scale_factor();
-            let win_width = (380.0 * scale_factor) as i32;
-            let win_height = (580.0 * scale_factor) as i32;
+            let screen_pos = monitor.position();
 
-            let margin_x = (16.0 * scale_factor) as i32;
-            let mut margin_y = (56.0 * scale_factor) as i32;
+            // 窗口物理像素尺寸
+            let win_w = (380.0 * scale) as i32;
+            let win_h = (580.0 * scale) as i32;
 
-            #[cfg(windows)]
-            {
-                // 查询 Windows 真实任务栏高度与位置
-                let mut app_bar_data = APPBARDATA {
-                    cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-                    ..Default::default()
-                };
-                let res = unsafe {
-                    SHAppBarMessage(ABM_GETTASKBARPOS, &mut app_bar_data as *mut _ as _)
-                };
-                if res != 0 {
-                    let taskbar_height = (app_bar_data.rc.bottom - app_bar_data.rc.top).abs();
-                    if taskbar_height > 0 && taskbar_height < 200 {
-                        margin_y = taskbar_height + (10.0 * scale_factor) as i32;
-                    }
-                }
-            }
+            // 边距: 右侧保留 16px, 底部为 Windows 任务栏预留 64px
+            let margin_x = (16.0 * scale) as i32;
+            let margin_y = (64.0 * scale) as i32;
 
-            let x = (screen_size.width as i32) - win_width - margin_x;
-            let y = (screen_size.height as i32) - win_height - margin_y;
+            // 基于主屏幕的原点坐标与物理像素计算右下角位置
+            let mut x = screen_pos.x + screen_size.width as i32 - win_w - margin_x;
+            let mut y = screen_pos.y + screen_size.height as i32 - win_h - margin_y;
 
-            let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                x: x.max(0),
-                y: y.max(0),
-            }));
+            // 核心安全钳位 (Clamp)：确保窗口完全落在主屏幕视口内，绝对不会飞出屏幕或成为负数
+            let min_x = screen_pos.x;
+            let max_x = screen_pos.x + (screen_size.width as i32 - win_w).max(0);
+            let min_y = screen_pos.y;
+            let max_y = screen_pos.y + (screen_size.height as i32 - win_h).max(0);
+
+            x = x.clamp(min_x, max_x);
+            y = y.clamp(min_y, max_y);
+
+            let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+        } else {
+            let _ = window.center();
         }
     }
 

@@ -3,7 +3,7 @@ pub mod core;
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 
 use crate::core::ble::BleServer;
@@ -61,6 +61,7 @@ fn toggle_pin_history_item(state: State<'_, AppState>, app: AppHandle, id: Strin
 fn refresh_pairing_pin(state: State<'_, AppState>) -> String {
     let new_pin = AppState::generate_pin();
     *state.pairing_code.lock().unwrap() = new_pin.clone();
+    state.persist_current_settings();
     new_pin
 }
 
@@ -89,7 +90,11 @@ fn hide_window(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    if let Ok(file) = std::fs::File::create("D:\\PasteLink\\pastelink.log") {
+        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .try_init();
+    }
 
     // 1. 创建跨模块 Channel
     // Channel: 剪贴板变化 (Windows) -> BLE Notify 异步发送
@@ -99,7 +104,7 @@ pub fn run() {
 
     let app_state = AppState::new(clip_send_tx);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
@@ -176,67 +181,72 @@ pub fn run() {
                     .build()?;
 
                 // 7. 构建托盘图标
-                let tray = TrayIconBuilder::new()
-                    .icon(app.default_window_icon().unwrap().clone())
-                    .tooltip("PasteLink - 跨设备极速剪贴板 (Ctrl+Shift+V)")
-                    .menu(&menu)
-                    .on_menu_event({
-                        let state = state.clone();
-                        move |app, event| match event.id.as_ref() {
-                            "show" => {
+                if let Some(icon) = app.default_window_icon().cloned() {
+                    let tray = TrayIconBuilder::new()
+                        .icon(icon)
+                        .tooltip("PasteLink - 跨设备极速剪贴板 (Ctrl+Shift+V)")
+                        .menu(&menu)
+                        .on_menu_event({
+                            let state = state.clone();
+                            move |app, event| match event.id.as_ref() {
+                                "show" => {
+                                    if let Some(window) = app.get_webview_window("main") {
+                                        WindowEffectManager::position_tray_window(&window);
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
+                                }
+                                "toggle_pause" => {
+                                    let new_state = !state.is_paused();
+                                    state.set_paused(new_state);
+                                    let _ = app.emit("pause-state-changed", new_state);
+                                }
+                                "quit" => {
+                                    app.exit(0);
+                                }
+                                _ => {}
+                            }
+                        })
+                        .on_tray_icon_event(move |tray, event| {
+                            if let TrayIconEvent::Click {
+                                button: MouseButton::Left,
+                                button_state: MouseButtonState::Up,
+                                ..
+                            } = event
+                            {
+                                let app = tray.app_handle();
                                 if let Some(window) = app.get_webview_window("main") {
-                                    WindowEffectManager::position_tray_window(&window);
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                    if window.is_visible().unwrap_or(false) {
+                                        let _ = window.hide();
+                                    } else {
+                                        WindowEffectManager::position_tray_window(&window);
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
                                 }
                             }
-                            "toggle_pause" => {
-                                let new_state = !state.is_paused();
-                                state.set_paused(new_state);
-                                let _ = app.emit("pause-state-changed", new_state);
-                            }
-                            "quit" => {
-                                app.exit(0);
-                            }
-                            _ => {}
-                        }
-                    })
-                    .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } = event
-                        {
-                            let app = tray.app_handle();
-                            if let Some(window) = app.get_webview_window("main") {
-                                if window.is_visible().unwrap_or(false) {
-                                    let _ = window.hide();
-                                } else {
-                                    WindowEffectManager::position_tray_window(&window);
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
-                            }
-                        }
-                    })
-                    .build(app)?;
+                        })
+                        .build(app)?;
 
-                let _ = tray;
+                    let _ = tray;
+                }
 
-                // 8. 配置窗口失焦自动隐藏 (类似 Windows 11 Action Center)
+                // 8. 应用启动时主动定位并呈递窗口，让用户立刻看到界面
                 if let Some(window) = app.get_webview_window("main") {
-                    let w_clone = window.clone();
-                    window.on_window_event(move |event| {
-                        if let WindowEvent::Focused(false) = event {
-                            let _ = w_clone.hide();
-                        }
-                    });
+                    WindowEffectManager::position_tray_window(&window);
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
 
                 Ok(())
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            api.prevent_exit();
+        }
+    });
 }

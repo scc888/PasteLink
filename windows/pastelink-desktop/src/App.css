@@ -484,11 +484,12 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.clip-card:hover {
+.clip-card:hover,
+.clip-card.active-selected {
   background: var(--bg-card-hover);
-  border-color: rgba(0, 120, 212, 0.45);
+  border-color: rgba(0, 120, 212, 0.65);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 120, 212, 0.35);
 }
 
 .clip-card.pinned {
@@ -939,4 +940,64 @@ html, body, #root {
   15% { opacity: 1; transform: translate(-50%, 0) scale(1); }
   80% { opacity: 1; transform: translate(-50%, 0) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -6px) scale(0.98); }
+}
+
+/* ─── Onboarding Guide ──────────────────────────────────── */
+.onboarding-guide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 12px;
+  width: 100%;
+}
+
+.onboarding-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-blue);
+  background: rgba(0, 120, 212, 0.12);
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 120, 212, 0.2);
+}
+
+.onboarding-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.onboarding-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.step-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  color: #fff;
+  font-size: 10px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.onboarding-tip {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
 }

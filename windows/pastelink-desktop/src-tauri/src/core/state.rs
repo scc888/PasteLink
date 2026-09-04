@@ -5,8 +5,50 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::Sender;
 
+use std::path::PathBuf;
+
 const MAX_HISTORY: usize = 30;
 const MAX_DEDUP_HASHES: usize = 50;
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct PersistentSettings {
+    pub pairing_code: Option<String>,
+    pub ignore_password_manager: Option<bool>,
+}
+
+impl PersistentSettings {
+    fn config_path() -> Option<PathBuf> {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let mut path = PathBuf::from(appdata);
+            path.push("PasteLink");
+            let _ = std::fs::create_dir_all(&path);
+            path.push("settings.json");
+            return Some(path);
+        }
+        None
+    }
+
+    pub fn load() -> Self {
+        if let Some(path) = Self::config_path() {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(settings) = serde_json::from_str::<Self>(&content) {
+                        return settings;
+                    }
+                }
+            }
+        }
+        Self::default()
+    }
+
+    pub fn save(&self) {
+        if let Some(path) = Self::config_path() {
+            if let Ok(json) = serde_json::to_string_pretty(self) {
+                let _ = std::fs::write(path, json);
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,15 +73,45 @@ pub struct StatusPayload {
 
 impl AppState {
     pub fn new(clip_send_tx: Sender<String>) -> Self {
-        Self {
+        let settings = PersistentSettings::load();
+        let (initial_pin, save_needed) = if let Some(code) = settings.pairing_code {
+            let clean = code.replace(' ', "");
+            if clean.len() == 6 && clean.chars().all(|c| c.is_ascii_digit()) {
+                (code, false)
+            } else {
+                (Self::generate_pin(), true)
+            }
+        } else {
+            (Self::generate_pin(), true)
+        };
+
+        let ignore_pwd = settings.ignore_password_manager.unwrap_or(true);
+
+        let state = Self {
             is_paused: Arc::new(AtomicBool::new(false)),
-            ignore_password_manager: Arc::new(AtomicBool::new(true)),
+            ignore_password_manager: Arc::new(AtomicBool::new(ignore_pwd)),
             connected_devices_count: Arc::new(AtomicU32::new(0)),
             recent_items: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))),
-            pairing_code: Arc::new(Mutex::new(Self::generate_pin())),
+            pairing_code: Arc::new(Mutex::new(initial_pin.clone())),
             dedup_hashes: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_DEDUP_HASHES))),
             clip_send_tx,
+        };
+
+        if save_needed {
+            state.persist_current_settings();
         }
+
+        state
+    }
+
+    pub fn persist_current_settings(&self) {
+        let code = self.pairing_code.lock().unwrap().clone();
+        let ignore = self.should_ignore_password_manager();
+        let settings = PersistentSettings {
+            pairing_code: Some(code),
+            ignore_password_manager: Some(ignore),
+        };
+        settings.save();
     }
 
     pub fn generate_pin() -> String {
@@ -123,6 +195,7 @@ impl AppState {
 
     pub fn set_ignore_password_manager(&self, ignore: bool) {
         self.ignore_password_manager.store(ignore, Ordering::SeqCst);
+        self.persist_current_settings();
     }
 
     pub fn get_status_payload(&self) -> StatusPayload {
