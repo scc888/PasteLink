@@ -8,12 +8,14 @@ import SwiftUI
 @main
 struct PasteLinkApp: App {
     @StateObject private var bluetoothManager = BluetoothManager.shared
+    @ObservedObject private var store = PasteLinkStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             MainTabView()
                 .environmentObject(bluetoothManager)
+                .preferredColorScheme(store.appTheme.colorScheme)
                 .onChange(of: scenePhase) { newPhase in
                     if newPhase == .active {
                         // 保证前台激活时灵动岛通道就绪
@@ -32,8 +34,16 @@ struct PasteLinkApp: App {
                                 generator.notificationOccurred(.success)
                             }
                         } else if url.host == "push" || url.path == "/push" {
-                            if let clipText = UIPasteboard.general.string, !clipText.isEmpty {
+                            if let img = UIPasteboard.general.image {
+                                bluetoothManager.sendImageToWindows(image: img)
+                                let generator = UINotificationFeedbackGenerator()
+                                generator.prepare()
+                                generator.notificationOccurred(.success)
+                            } else if let clipText = UIPasteboard.general.string, !clipText.isEmpty {
                                 bluetoothManager.sendToWindows(text: clipText)
+                                let generator = UINotificationFeedbackGenerator()
+                                generator.prepare()
+                                generator.notificationOccurred(.success)
                             }
                         }
                     }

@@ -15,10 +15,13 @@ struct SettingsView: View {
                 // 1. 已信任电脑设备
                 pairedDevicesSection
 
-                // 2. 端到端加密设置
+                // 2. 外观与显示模式 (深色模式)
+                appearanceSection
+
+                // 3. 端到端加密设置
                 securitySection
 
-                // 3. 剪贴板历史记录设置
+                // 4. 剪贴板历史记录设置
                 historySection
 
                 // 4. 隐私与数据安全
@@ -100,7 +103,39 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 2. 安全加密
+    // MARK: - 2. 外观与显示模式 (深色模式)
+
+    private var appearanceSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("深色模式", systemImage: store.appTheme.iconName)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(store.appTheme.title)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Picker("外观模式", selection: Binding(
+                    get: { store.appTheme },
+                    set: { store.setAppTheme($0) }
+                )) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Label(theme.title, systemImage: theme.iconName).tag(theme)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("外观与显示")
+        } footer: {
+            Text("选择「跟随系统」将随 iOS 系统自动切换；选择「浅色模式」或「深色模式」将在应用内锁定对应外观。")
+        }
+    }
+
+    // MARK: - 3. 安全加密
 
     private var securitySection: some View {
         Section("安全与配对") {

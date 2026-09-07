@@ -39,6 +39,44 @@ fn copy_to_system_clipboard(state: State<'_, AppState>, text: String) -> Result<
 }
 
 #[tauri::command]
+fn copy_item_by_id(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let item_opt = {
+        let items = state.recent_items.lock().unwrap();
+        items.iter().find(|i| i.id == id).cloned()
+    };
+
+    if let Some(item) = item_opt {
+        state.is_duplicate_or_record(&item.sha256);
+        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+
+        if item.item_type == "image" {
+            if let Some(ref data_url) = item.image_data {
+                if let Some(b64) = data_url.strip_prefix("data:image/png;base64,") {
+                    use base64::Engine;
+                    let png_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .map_err(|e| format!("Base64 解码失败: {}", e))?;
+
+                    let (w, h, rgba) = crate::core::protocol::decode_png_to_rgba(&png_bytes)?;
+                    cb.set_image(arboard::ImageData {
+                        width: w as usize,
+                        height: h as usize,
+                        bytes: std::borrow::Cow::from(rgba),
+                    })
+                    .map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
+            }
+            return Err("图像数据缺失".to_string());
+        } else {
+            cb.set_text(&item.content).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("未找到指定历史条目".to_string())
+}
+
+#[tauri::command]
 fn clear_history(state: State<'_, AppState>, app: AppHandle) {
     state.clear_history();
     let _ = app.emit("history-cleared", ());
@@ -98,9 +136,11 @@ pub fn run() {
 
     // 1. 创建跨模块 Channel
     // Channel: 剪贴板变化 (Windows) -> BLE Notify 异步发送
-    let (clip_send_tx, mut clip_send_rx) = mpsc::channel::<String>(64);
+    let (clip_send_tx, mut clip_send_rx) =
+        mpsc::channel::<crate::core::protocol::ClipboardPayload>(64);
     // Channel: BLE Write (iPhone) -> 剪贴板写入线程
-    let (clip_write_tx, clip_write_rx) = std::sync::mpsc::channel::<String>();
+    let (clip_write_tx, clip_write_rx) =
+        std::sync::mpsc::channel::<crate::core::protocol::ClipboardPayload>();
 
     let app_state = AppState::new(clip_send_tx);
 
@@ -113,6 +153,7 @@ pub fn run() {
             toggle_ignore_password_manager,
             toggle_autostart,
             copy_to_system_clipboard,
+            copy_item_by_id,
             clear_history,
             delete_history_item,
             toggle_pin_history_item,
@@ -135,7 +176,7 @@ pub fn run() {
                 let state_for_ble = state.clone();
                 let app_for_ble = app_handle.clone();
                 std::thread::spawn(move || {
-                    match BleServer::start(app_for_ble, state_for_ble.clone(), clip_write_tx) {
+                    match BleServer::start(app_for_ble.clone(), state_for_ble.clone(), clip_write_tx) {
                         Ok(server) => {
                             log::info!("[BLE] GATT 服务就绪，等待 iPhone 连接...");
                             let server = Arc::new(server);
@@ -146,9 +187,9 @@ pub fn run() {
                                 .unwrap();
 
                             rt.block_on(async move {
-                                while let Some(text) = clip_send_rx.recv().await {
+                                while let Some(payload) = clip_send_rx.recv().await {
                                     let pin = state_for_ble.pairing_code.lock().unwrap().clone();
-                                    if let Err(e) = server.notify_clipboard(&text, &pin) {
+                                    if let Err(e) = server.notify_payload(&app_for_ble, &payload, &pin) {
                                         log::warn!("[BLE] 广播推送异常: {}", e);
                                     }
                                 }

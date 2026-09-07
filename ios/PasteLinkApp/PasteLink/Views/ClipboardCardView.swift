@@ -44,16 +44,54 @@ struct ClipboardCardView: View {
                 .buttonStyle(.plain)
             }
 
-            // 卡片内容文本
-            Text(item.content)
-                .font(.subheadline)
-                .lineLimit(4)
-                .textSelection(.enabled)
-                .foregroundStyle(.primary)
+            // 卡片内容 (支持文本或无损图片缩略图)
+            if let uiImage = decodedImage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .background(Color(.tertiarySystemBackground))
+
+                    HStack {
+                        if let w = item.width, let h = item.height {
+                            Text("\(w) × \(h) 像素")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if let sz = item.fileSize {
+                            Text("无损 PNG · \(ByteCountFormatter.string(fromByteCount: Int64(sz), countStyle: .file))")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.pink)
+                        }
+                    }
+                }
+            } else {
+                Text(item.content)
+                    .font(.subheadline)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+                    .foregroundStyle(.primary)
+            }
 
             // 卡片底部快捷动作栏
             HStack {
                 Spacer()
+
+                // 保存到相册 (仅图片类型显示)
+                if let uiImage = decodedImage {
+                    Button {
+                        UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 // 分享按钮
                 ShareLink(item: item.content) {
@@ -68,7 +106,7 @@ struct ClipboardCardView: View {
                     triggerCopy()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: isCopiedAnimation ? "checkmark" : "doc.on.clipboard")
+                        Image(systemName: isCopiedAnimation ? "checkmark" : (item.category == "image" ? "photo.on.rectangle" : "doc.on.clipboard"))
                             .font(.caption2.bold())
                         Text(isCopiedAnimation ? "已复制" : "复制")
                             .font(.caption2.bold())
@@ -99,7 +137,15 @@ struct ClipboardCardView: View {
             Button {
                 triggerCopy()
             } label: {
-                Label("复制到系统剪贴板", systemImage: "doc.on.clipboard")
+                Label(item.category == "image" ? "复制图片到剪贴板" : "复制到系统剪贴板", systemImage: item.category == "image" ? "photo.on.rectangle" : "doc.on.clipboard")
+            }
+
+            if let uiImage = decodedImage {
+                Button {
+                    UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+                } label: {
+                    Label("保存图片到系统相册", systemImage: "square.and.arrow.down")
+                }
             }
 
             Button {
@@ -122,6 +168,16 @@ struct ClipboardCardView: View {
         }
     }
 
+    private var decodedImage: UIImage? {
+        guard item.category == "image",
+              let imgStr = item.imageData,
+              let rawData = Data(base64Encoded: imgStr.replacingOccurrences(of: "data:image/png;base64,", with: ""))
+        else {
+            return nil
+        }
+        return UIImage(data: rawData)
+    }
+
     private var categoryBadge: some View {
         Group {
             switch item.category {
@@ -133,6 +189,10 @@ struct ClipboardCardView: View {
                 Label("代码", systemImage: "chevron.left.forwardslash.chevron.right")
                     .font(.caption2)
                     .foregroundStyle(.orange)
+            case "image":
+                Label("图片", systemImage: "photo")
+                    .font(.caption2)
+                    .foregroundStyle(.pink)
             default:
                 EmptyView()
             }
@@ -140,7 +200,11 @@ struct ClipboardCardView: View {
     }
 
     private func triggerCopy() {
-        onCopy(item)
+        if let uiImage = decodedImage {
+            UIPasteboard.general.image = uiImage
+        } else {
+            onCopy(item)
+        }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
             isCopiedAnimation = true
         }

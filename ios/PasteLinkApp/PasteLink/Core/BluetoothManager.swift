@@ -2,6 +2,7 @@ import ActivityKit
 import CoreBluetooth
 import Foundation
 import os
+import UIKit
 import WidgetKit
 
 /// 发现的 BLE 设备模型
@@ -220,7 +221,7 @@ final class BluetoothManager: NSObject, ObservableObject {
             return
         }
 
-        guard encryptedData.count <= 64 * 1024 else {
+        guard encryptedData.count <= 10 * 1024 * 1024 else {
             addLog("❌ 发送失败: 文本过大 (\(encryptedData.count) 字节)")
             return
         }
@@ -234,6 +235,67 @@ final class BluetoothManager: NSObject, ObservableObject {
             peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
         }
         addLog("📤 [分片加密] 已发送 \(encryptedData.count) 字节 (\(chunks.count) 分片) [SHA: \(item.sha256.prefix(8))]")
+    }
+
+    /// 向 Windows 发送无损 PNG 图片 (自动使用 PLKI 封装、AES-256-GCM 加密与 BLE 分片)
+    func sendImageToWindows(image: UIImage) {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = writeCharacteristic
+        else {
+            addLog("❌ 发送图片失败: 未连接到电脑或不可写")
+            return
+        }
+
+        guard let pngData = image.pngData() else {
+            addLog("❌ 发送图片失败: 无法将图像转换为无损 PNG 格式")
+            return
+        }
+
+        let width = UInt32(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        let height = UInt32(image.cgImage?.height ?? Int(image.size.height * image.scale))
+
+        let wrapped = CryptoEngine.wrapImagePayload(width: width, height: height, pngData: pngData)
+        let pin = PasteLinkStore.shared.getPairingPIN()
+
+        guard let encryptedData = try? CryptoEngine.encryptData(data: wrapped, pin: pin) else {
+            addLog("❌ 发送图片失败: AES-256-GCM 加密异常")
+            return
+        }
+
+        guard encryptedData.count <= 10 * 1024 * 1024 else {
+            addLog("❌ 发送图片失败: 图片过大 (\(encryptedData.count) 字节)")
+            return
+        }
+
+        let item = PasteLinkStore.shared.saveSentImage(pngData: pngData, width: Int(width), height: Int(height))
+        let msgId = rollingMsgId
+        rollingMsgId = rollingMsgId &+ 1
+        let chunks = BLEChunkProtocol.fragment(data: encryptedData, msgId: msgId)
+
+        addLog("📤 [图片推送] 开始向 Windows 推送无损图片 (\(width)×\(height), \(pngData.count) 字节, \(chunks.count) 分片)...")
+
+        // 申请后台任务保活，防止传输中切屏被挂起
+        var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+        bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "PasteLinkSendImage") {
+            UIApplication.shared.endBackgroundTask(bgTaskId)
+            bgTaskId = .invalid
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            for (index, chunk) in chunks.enumerated() {
+                peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+                if index % 20 == 0 || index == chunks.count - 1 {
+                    let pct = Int((Double(index + 1) / Double(chunks.count)) * 100)
+                    self.addLog("📤 [图片推送进度] \(pct)% (\(index + 1)/\(chunks.count) 分片)")
+                }
+                Thread.sleep(forTimeInterval: 0.008)
+            }
+            self.addLog("✅ [图片推送完成] 已将无损图片同步至 Windows 剪贴板 [SHA: \(item.sha256.prefix(8))]")
+            if bgTaskId != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+            }
+        }
     }
 
     /// 直接发送文本 (供 App Intent / 快捷指令调用，支持异步发送与自动重连排队)
@@ -254,7 +316,7 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         let pin = PasteLinkStore.shared.getPairingPIN()
         guard let encryptedData = try? CryptoEngine.encrypt(text: text, pin: pin),
-              encryptedData.count <= 64 * 1024
+              encryptedData.count <= 10 * 1024 * 1024
         else {
             return false
         }
@@ -597,11 +659,42 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         let pin = PasteLinkStore.shared.getPairingPIN()
-        guard let text = CryptoEngine.decrypt(data: data, pin: pin), !text.isEmpty else {
+        guard let decryptedRaw = CryptoEngine.decryptData(data: data, pin: pin), !decryptedRaw.isEmpty else {
             addLog("❌ 接收到无法解密的剪贴板数据 (请核对配对 PIN 码)")
             DispatchQueue.main.async {
                 self.isAuthFailed = true
             }
+            return
+        }
+
+        // 1. 优先检查是否为 PLKI 图像二进制封包
+        if let (width, height, pngData) = CryptoEngine.unwrapImagePayload(data: decryptedRaw) {
+            guard let uiImage = UIImage(data: pngData) else {
+                addLog("⚠️ 收到图片数据但无法解码为 UIImage")
+                return
+            }
+
+            let item = PasteLinkStore.shared.saveReceivedImage(pngData: pngData, width: Int(width), height: Int(height))
+            addLog("🖼️ [已解密] 收到来自 Windows 的无损图片 (\(width)×\(height), \(pngData.count) 字节) [SHA: \(item.sha256.prefix(8))]")
+
+            DispatchQueue.main.async {
+                self.isAuthFailed = false
+                self.lastReceivedText = "[图片] \(width)×\(height)"
+                self.lastReceivedTime = Date()
+                UIPasteboard.general.image = uiImage
+            }
+
+            WidgetCenter.shared.reloadAllTimelines()
+            LiveActivityManager.shared.showLiveActivity(
+                text: "已同步来自电脑的图片 (\(width)×\(height))",
+                deviceName: self.connectedDeviceName ?? "Windows 电脑"
+            )
+            return
+        }
+
+        // 2. 否则按 UTF-8 文本处理
+        guard let text = String(data: decryptedRaw, encoding: .utf8), !text.isEmpty else {
+            addLog("⚠️ 收到非图片且非 UTF-8 文本数据")
             return
         }
 
@@ -614,11 +707,12 @@ extension BluetoothManager: CBPeripheralDelegate {
         let item = PasteLinkStore.shared.saveReceivedItem(text: text)
         addLog("📋 [已解密] 收到 Windows 剪贴板: \"\(preview)\" (\(data.count)B) [SHA: \(item.sha256.prefix(8))]")
 
-        // 1. 更新 UI 属性
+        // 1. 更新 UI 属性与剪贴板
         DispatchQueue.main.async {
             self.isAuthFailed = false
             self.lastReceivedText = text
             self.lastReceivedTime = Date()
+            UIPasteboard.general.string = text
         }
 
         // 2. 刷新所有桌面与锁屏小组件

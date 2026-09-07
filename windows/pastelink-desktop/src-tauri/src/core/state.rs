@@ -1,4 +1,4 @@
-use crate::core::protocol::ClipboardItem;
+use crate::core::protocol::{ClipboardItem, ClipboardPayload};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -58,7 +58,7 @@ pub struct AppState {
     pub recent_items: Arc<Mutex<VecDeque<ClipboardItem>>>,
     pub pairing_code: Arc<Mutex<String>>,
     pub dedup_hashes: Arc<Mutex<VecDeque<String>>>,
-    pub clip_send_tx: Sender<String>,
+    pub clip_send_tx: Sender<ClipboardPayload>,
 }
 
 #[derive(Serialize)]
@@ -72,7 +72,7 @@ pub struct StatusPayload {
 }
 
 impl AppState {
-    pub fn new(clip_send_tx: Sender<String>) -> Self {
+    pub fn new(clip_send_tx: Sender<ClipboardPayload>) -> Self {
         let settings = PersistentSettings::load();
         let (initial_pin, save_needed) = if let Some(code) = settings.pairing_code {
             let clean = code.replace(' ', "");

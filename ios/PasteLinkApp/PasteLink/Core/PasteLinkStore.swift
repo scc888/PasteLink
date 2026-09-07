@@ -1,5 +1,39 @@
 import CryptoKit
 import Foundation
+import SwiftUI
+
+/// 应用外观主题模式
+enum AppTheme: String, CaseIterable, Identifiable, Codable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色模式"
+        case .dark: return "深色模式"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
 
 /// 剪贴板条目数据模型
 struct ClipboardItem: Identifiable, Codable, Equatable {
@@ -10,7 +44,11 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     var sha256: String
     var preview: String
     var isPinned: Bool
-    var category: String // "url" | "code" | "text"
+    var category: String // "url" | "code" | "text" | "image"
+    var imageData: String? // Base64 data URI
+    var width: Int?
+    var height: Int?
+    var fileSize: Int?
 
     init(content: String, source: String, isPinned: Bool = false) {
         self.id = UUID().uuidString
@@ -21,6 +59,27 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         self.preview = Self.makePreview(text: content, maxChars: 120)
         self.isPinned = isPinned
         self.category = Self.detectCategory(text: content)
+        self.imageData = nil
+        self.width = nil
+        self.height = nil
+        self.fileSize = nil
+    }
+
+    init(imagePNGData: Data, width: Int, height: Int, source: String, isPinned: Bool = false) {
+        self.id = UUID().uuidString
+        let sizeDesc = ByteCountFormatter.string(fromByteCount: Int64(imagePNGData.count), countStyle: .file)
+        self.content = "[图片] \(width)×\(height) (\(sizeDesc))"
+        self.source = source
+        self.timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+        let hash = SHA256.hash(data: imagePNGData)
+        self.sha256 = hash.compactMap { String(format: "%02x", $0) }.joined()
+        self.preview = "[图片] \(width) × \(height) 像素"
+        self.isPinned = isPinned
+        self.category = "image"
+        self.imageData = "data:image/png;base64," + imagePNGData.base64EncodedString()
+        self.width = width
+        self.height = height
+        self.fileSize = imagePNGData.count
     }
 
     static func calculateSHA256(text: String) -> String {
@@ -73,6 +132,7 @@ final class PasteLinkStore: ObservableObject {
     @Published var history: [ClipboardItem] = []
     @Published var pairedPIN: String = ""
     @Published var maxHistoryCount: Int = 10
+    @Published var appTheme: AppTheme = .system
 
     private init() {
         let storedLimit = defaults.integer(forKey: "maxHistoryCount")
@@ -80,6 +140,26 @@ final class PasteLinkStore: ObservableObject {
         self.history = getHistory()
         let pin = getPairingPIN()
         self.pairedPIN = pin.isEmpty ? getLastEnteredPIN() : pin
+
+        let rawTheme = defaults.string(forKey: "appTheme") ?? UserDefaults.standard.string(forKey: "appTheme")
+        if let rawTheme = rawTheme, let theme = AppTheme(rawValue: rawTheme) {
+            self.appTheme = theme
+        } else {
+            self.appTheme = .system
+        }
+    }
+
+    // MARK: - 外观主题切换配置
+
+    func setAppTheme(_ theme: AppTheme) {
+        defaults.set(theme.rawValue, forKey: "appTheme")
+        defaults.synchronize()
+        UserDefaults.standard.set(theme.rawValue, forKey: "appTheme")
+        UserDefaults.standard.synchronize()
+
+        DispatchQueue.main.async {
+            self.appTheme = theme
+        }
     }
 
     // MARK: - 历史记录上限配置
@@ -198,6 +278,56 @@ final class PasteLinkStore: ObservableObject {
     @discardableResult
     func saveSentItem(text: String) -> ClipboardItem {
         let item = ClipboardItem(content: text, source: "iphone")
+        _ = isDuplicateOrRecord(sha256: item.sha256)
+
+        var items = getHistory()
+        let isPreviouslyPinned = items.first(where: { $0.sha256 == item.sha256 })?.isPinned ?? false
+        var newItem = item
+        newItem.isPinned = isPreviouslyPinned
+
+        items.removeAll { $0.sha256 == item.sha256 }
+        items.insert(newItem, at: 0)
+
+        while items.count > maxHistoryCount {
+            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
+                items.remove(at: lastUnpinnedIndex)
+            } else {
+                break
+            }
+        }
+
+        saveHistoryToDisk(items)
+        return newItem
+    }
+
+    @discardableResult
+    func saveReceivedImage(pngData: Data, width: Int, height: Int) -> ClipboardItem {
+        let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "windows")
+        _ = isDuplicateOrRecord(sha256: item.sha256)
+
+        var items = getHistory()
+        let isPreviouslyPinned = items.first(where: { $0.sha256 == item.sha256 })?.isPinned ?? false
+        var newItem = item
+        newItem.isPinned = isPreviouslyPinned
+
+        items.removeAll { $0.sha256 == item.sha256 }
+        items.insert(newItem, at: 0)
+
+        while items.count > maxHistoryCount {
+            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
+                items.remove(at: lastUnpinnedIndex)
+            } else {
+                break
+            }
+        }
+
+        saveHistoryToDisk(items)
+        return newItem
+    }
+
+    @discardableResult
+    func saveSentImage(pngData: Data, width: Int, height: Int) -> ClipboardItem {
+        let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "iphone")
         _ = isDuplicateOrRecord(sha256: item.sha256)
 
         var items = getHistory()

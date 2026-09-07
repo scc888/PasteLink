@@ -16,6 +16,7 @@ struct ClipboardFeedView: View {
         case all = "全部"
         case windows = "来自电脑"
         case iphone = "来自手机"
+        case image = "图片"
         case pinned = "已置顶"
 
         var id: String { rawValue }
@@ -30,6 +31,8 @@ struct ClipboardFeedView: View {
             list = list.filter { $0.source == "windows" }
         case .iphone:
             list = list.filter { $0.source == "iphone" }
+        case .image:
+            list = list.filter { $0.category == "image" }
         case .pinned:
             list = list.filter { $0.isPinned }
         }
@@ -194,9 +197,12 @@ struct ClipboardFeedView: View {
 
     private var quickSendSection: some View {
         Button {
-            if let clip = UIPasteboard.general.string, !clip.isEmpty {
+            if let img = UIPasteboard.general.image {
+                bluetooth.sendImageToWindows(image: img)
+                triggerToast("📤 正在推送无损图片至 Windows...")
+            } else if let clip = UIPasteboard.general.string, !clip.isEmpty {
                 bluetooth.sendToWindows(text: clip)
-                triggerToast("📤 已加密发送至 Windows")
+                triggerToast("📤 已加密发送文本至 Windows")
             } else {
                 triggerToast("⚠️ 当前 iPhone 剪贴板为空")
             }
@@ -207,7 +213,7 @@ struct ClipboardFeedView: View {
                     .foregroundStyle(.white)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("发送当前 iPhone 剪贴板到电脑")
+                    Text("发送当前剪贴板 (文字/图片) 到电脑")
                         .font(.subheadline.bold())
                         .foregroundStyle(.white)
                     Text("电脑端直接按 Ctrl+V 即可粘贴")
@@ -295,10 +301,14 @@ struct ClipboardFeedView: View {
             .font(.subheadline.weight(.medium))
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
-            .background(Color.black.opacity(0.85))
-            .foregroundStyle(.white)
+            .background(.ultraThinMaterial)
+            .foregroundStyle(.primary)
             .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+            .overlay(
+                Capsule()
+                    .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.18), radius: 12, y: 6)
             .padding(.bottom, 24)
             .transition(.move(edge: .bottom).combined(with: .opacity))
     }

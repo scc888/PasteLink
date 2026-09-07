@@ -6,8 +6,22 @@ export interface ClipboardItem {
   sha256: string;
   preview: string;
   char_count: number;
-  item_type: 'url' | 'code' | 'otp' | 'text';
+  item_type: 'url' | 'code' | 'otp' | 'text' | 'image';
   is_pinned: boolean;
+  image_data?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+}
+
+export interface TransferProgressPayload {
+  is_active: boolean;
+  percent: number;
+  total_bytes: number;
+  transferred_chunks: number;
+  total_chunks: number;
+  item_type: 'image' | 'text';
+  direction: 'send' | 'receive';
 }
 
 export interface StatusPayload {
@@ -18,3 +32,5 @@ export interface StatusPayload {
   pairing_code: string;
   recent_items: ClipboardItem[];
 }
+
+export type ThemeMode = 'system' | 'light' | 'dark';
