@@ -136,7 +136,7 @@ final class PasteLinkStore: ObservableObject {
 
     /// App Group 共享容器 URL
     static var sharedContainerURL: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)
     }
 
     /// 图片独立存储目录 (App Group 共享容器优先，沙盒 Documents 兜底)
@@ -308,7 +308,7 @@ final class PasteLinkStore: ObservableObject {
         defaults.set(text, forKey: "lastReceivedClipboard")
         defaults.set(Date(), forKey: "lastReceivedTime")
 
-        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+        if let containerURL = Self.sharedContainerURL {
             let imgURL = containerURL.appendingPathComponent("last_received_image.png")
             try? FileManager.default.removeItem(at: imgURL)
         }
