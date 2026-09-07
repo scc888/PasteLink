@@ -92,9 +92,6 @@ final class LiveActivityManager: ObservableObject {
             return
         }
 
-        // 保存到共享存储
-        let sharedDefaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
-        sharedDefaults.set(text, forKey: "lastReceivedClipboard")
         WidgetKit.WidgetCenter.shared.reloadAllTimelines()
 
         let preview = text.count > 30 ? String(text.prefix(30)) + "..." : text

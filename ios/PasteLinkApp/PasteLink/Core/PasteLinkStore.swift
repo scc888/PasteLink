@@ -250,8 +250,14 @@ final class PasteLinkStore: ObservableObject {
         _ = isDuplicateOrRecord(sha256: item.sha256)
 
         // 兼容单文本键值 (供 Intents / Widget 读取)
+        defaults.set("text", forKey: "lastReceivedType")
         defaults.set(text, forKey: "lastReceivedClipboard")
         defaults.set(Date(), forKey: "lastReceivedTime")
+
+        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+            let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+            try? FileManager.default.removeItem(at: imgURL)
+        }
 
         var items = getHistory()
         // 保留收藏项
@@ -304,6 +310,18 @@ final class PasteLinkStore: ObservableObject {
     func saveReceivedImage(pngData: Data, width: Int, height: Int) -> ClipboardItem {
         let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "windows")
         _ = isDuplicateOrRecord(sha256: item.sha256)
+
+        // 存储共享图片文件与元数据，供 Intents / 快捷指令 / 外部 URL Scheme 读取
+        defaults.set("image", forKey: "lastReceivedType")
+        defaults.set(width, forKey: "lastReceivedImageWidth")
+        defaults.set(height, forKey: "lastReceivedImageHeight")
+        defaults.set(Date(), forKey: "lastReceivedTime")
+        defaults.removeObject(forKey: "lastReceivedClipboard")
+
+        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+            let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+            try? pngData.write(to: imgURL, options: .atomic)
+        }
 
         var items = getHistory()
         let isPreviouslyPinned = items.first(where: { $0.sha256 == item.sha256 })?.isPinned ?? false

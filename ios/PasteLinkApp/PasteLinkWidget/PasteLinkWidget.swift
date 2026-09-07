@@ -65,6 +65,15 @@ struct PasteLinkWidgetProvider: TimelineProvider {
 
     private func readSharedClipboard() -> String? {
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let type = defaults.string(forKey: "lastReceivedType") ?? "text"
+        if type == "image" {
+            let width = defaults.integer(forKey: "lastReceivedImageWidth")
+            let height = defaults.integer(forKey: "lastReceivedImageHeight")
+            if width > 0 && height > 0 {
+                return "[图片] \(width) × \(height)"
+            }
+            return "[图片]"
+        }
         return defaults.string(forKey: "lastReceivedClipboard")
     }
 }

@@ -27,7 +27,18 @@ struct PasteLinkApp: App {
                     if url.scheme == "pastelink" {
                         if url.host == "copy" || url.path == "/copy" {
                             let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
-                            if let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty {
+                            let type = defaults.string(forKey: "lastReceivedType") ?? "text"
+                            if type == "image" {
+                                if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+                                    let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+                                    if let data = try? Data(contentsOf: imgURL), let img = UIImage(data: data) {
+                                        UIPasteboard.general.image = img
+                                        let generator = UINotificationFeedbackGenerator()
+                                        generator.prepare()
+                                        generator.notificationOccurred(.success)
+                                    }
+                                }
+                            } else if let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty {
                                 UIPasteboard.general.string = text
                                 let generator = UINotificationFeedbackGenerator()
                                 generator.prepare()
