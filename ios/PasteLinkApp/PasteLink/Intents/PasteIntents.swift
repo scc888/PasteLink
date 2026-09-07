@@ -118,13 +118,42 @@ struct SendToWindowsIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         var targetText: String = text ?? ""
+        var targetImageData: Data? = nil
         if targetText.isEmpty {
             await MainActor.run {
-                targetText = UIPasteboard.general.string ?? ""
+                if let img = UIPasteboard.general.image, let data = img.pngData() {
+                    targetImageData = data
+                } else {
+                    targetText = UIPasteboard.general.string ?? ""
+                }
             }
         }
+
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+
+        if let imgData = targetImageData,
+           let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+            let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+            try? imgData.write(to: pendingImgURL, options: .atomic)
+            defaults.set("image", forKey: "pendingSendType")
+            defaults.removeObject(forKey: "pendingSendToWindows")
+
+            let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                notificationName,
+                nil,
+                nil,
+                true
+            )
+
+            await MainActor.run {
+                AudioServicesPlaySystemSound(1519)
+            }
+            return .result()
+        }
+
         if targetText.isEmpty {
-            let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
             targetText = defaults.string(forKey: "pendingSendToWindows") ?? ""
         }
 
@@ -133,7 +162,7 @@ struct SendToWindowsIntent: AppIntent {
         }
 
         // 存入 App Group 跨进程共享缓存
-        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        defaults.set("text", forKey: "pendingSendType")
         defaults.set(targetText, forKey: "pendingSendToWindows")
 
         // 通过 Darwin Notification 通知主 App 进程立即投递 BLE 剪贴板包
@@ -212,15 +241,44 @@ struct ControlCenterPushIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         var clipText = ""
+        var clipImageData: Data? = nil
         await MainActor.run {
-            clipText = UIPasteboard.general.string ?? ""
+            if let img = UIPasteboard.general.image, let data = img.pngData() {
+                clipImageData = data
+            } else {
+                clipText = UIPasteboard.general.string ?? ""
+            }
+        }
+
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+
+        if let imgData = clipImageData,
+           let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+            let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+            try? imgData.write(to: pendingImgURL, options: .atomic)
+            defaults.set("image", forKey: "pendingSendType")
+            defaults.removeObject(forKey: "pendingSendToWindows")
+
+            let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                notificationName,
+                nil,
+                nil,
+                true
+            )
+
+            await MainActor.run {
+                AudioServicesPlaySystemSound(1519)
+            }
+            return .result()
         }
 
         guard !clipText.isEmpty else {
             return .result()
         }
 
-        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        defaults.set("text", forKey: "pendingSendType")
         defaults.set(clipText, forKey: "pendingSendToWindows")
 
         // 触发 Darwin Notification 发送
@@ -354,12 +412,38 @@ struct PushFromWidgetIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         var clipText = ""
+        var clipImageData: Data? = nil
         await MainActor.run {
-            clipText = UIPasteboard.general.string ?? ""
+            if let img = UIPasteboard.general.image, let data = img.pngData() {
+                clipImageData = data
+            } else {
+                clipText = UIPasteboard.general.string ?? ""
+            }
         }
 
-        if !clipText.isEmpty {
-            let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+
+        if let imgData = clipImageData,
+           let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+            let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+            try? imgData.write(to: pendingImgURL, options: .atomic)
+            defaults.set("image", forKey: "pendingSendType")
+            defaults.removeObject(forKey: "pendingSendToWindows")
+
+            let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                notificationName,
+                nil,
+                nil,
+                true
+            )
+
+            await MainActor.run {
+                AudioServicesPlaySystemSound(1519)
+            }
+        } else if !clipText.isEmpty {
+            defaults.set("text", forKey: "pendingSendType")
             defaults.set(clipText, forKey: "pendingSendToWindows")
 
             let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)

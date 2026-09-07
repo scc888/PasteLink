@@ -117,13 +117,31 @@ final class BluetoothManager: NSObject, ObservableObject {
         let callback: CFNotificationCallback = { _, _, name, _, _ in
             guard let name = name?.rawValue as String?, name == "com.pastelink.sendPendingClipboard" else { return }
             let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
-            if let pending = defaults.string(forKey: "pendingSendToWindows"), !pending.isEmpty {
+            let sendType = defaults.string(forKey: "pendingSendType") ?? "text"
+
+            if sendType == "image",
+               let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+                let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+                if let data = try? Data(contentsOf: pendingImgURL), let img = UIImage(data: data) {
+                    DispatchQueue.main.async {
+                        if BluetoothManager.shared.connectionState == .connected {
+                            try? FileManager.default.removeItem(at: pendingImgURL)
+                            defaults.removeObject(forKey: "pendingSendType")
+                            BluetoothManager.shared.sendImageToWindows(image: img)
+                        } else {
+                            BluetoothManager.shared.addLog("📡 收到图片推送请求，正在自动重连 Windows 电脑...")
+                            BluetoothManager.shared.startScanning()
+                        }
+                    }
+                }
+            } else if let pending = defaults.string(forKey: "pendingSendToWindows"), !pending.isEmpty {
                 DispatchQueue.main.async {
                     if BluetoothManager.shared.connectionState == .connected {
+                        defaults.removeObject(forKey: "pendingSendType")
                         defaults.removeObject(forKey: "pendingSendToWindows")
                         BluetoothManager.shared.sendToWindows(text: pending)
                     } else {
-                        BluetoothManager.shared.addLog("📡 收到推送请求，正在自动重连 Windows 电脑...")
+                        BluetoothManager.shared.addLog("📡 收到文本推送请求，正在自动重连 Windows 电脑...")
                         BluetoothManager.shared.startScanning()
                     }
                 }
@@ -599,7 +617,18 @@ extension BluetoothManager: CBPeripheralDelegate {
 
             // 检查是否有快捷指令暂存的待发送内容
             let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
-            if let pending = defaults.string(forKey: "pendingSendToWindows"), !pending.isEmpty {
+            let sendType = defaults.string(forKey: "pendingSendType") ?? "text"
+            if sendType == "image",
+               let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+                let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+                if let data = try? Data(contentsOf: pendingImgURL), let img = UIImage(data: data) {
+                    try? FileManager.default.removeItem(at: pendingImgURL)
+                    defaults.removeObject(forKey: "pendingSendType")
+                    self.sendImageToWindows(image: img)
+                    self.addLog("📤 [自动同步] 已发送先前快捷指令暂存的图片")
+                }
+            } else if let pending = defaults.string(forKey: "pendingSendToWindows"), !pending.isEmpty {
+                defaults.removeObject(forKey: "pendingSendType")
                 defaults.removeObject(forKey: "pendingSendToWindows")
                 self.sendToWindows(text: pending)
                 self.addLog("📤 [自动同步] 已发送先前快捷指令暂存的内容")

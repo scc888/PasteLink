@@ -33,6 +33,7 @@ struct PasteLinkApp: App {
                                     let imgURL = containerURL.appendingPathComponent("last_received_image.png")
                                     if let data = try? Data(contentsOf: imgURL), let img = UIImage(data: data) {
                                         UIPasteboard.general.image = img
+                                        UIPasteboard.general.setData(data, forPasteboardType: "public.png")
                                         let generator = UINotificationFeedbackGenerator()
                                         generator.prepare()
                                         generator.notificationOccurred(.success)
