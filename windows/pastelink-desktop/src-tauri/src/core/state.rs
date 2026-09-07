@@ -59,6 +59,8 @@ pub struct AppState {
     pub pairing_code: Arc<Mutex<String>>,
     pub dedup_hashes: Arc<Mutex<VecDeque<String>>>,
     pub clip_send_tx: Sender<ClipboardPayload>,
+    pub latest_payload: Arc<Mutex<Option<Vec<u8>>>>,
+    pub payload_lan_fetched: Arc<AtomicBool>,
 }
 
 #[derive(Serialize)]
@@ -95,6 +97,8 @@ impl AppState {
             pairing_code: Arc::new(Mutex::new(initial_pin.clone())),
             dedup_hashes: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_DEDUP_HASHES))),
             clip_send_tx,
+            latest_payload: Arc::new(Mutex::new(None)),
+            payload_lan_fetched: Arc::new(AtomicBool::new(false)),
         };
 
         if save_needed {
@@ -102,6 +106,25 @@ impl AppState {
         }
 
         state
+    }
+
+    pub fn set_latest_payload(&self, payload: Vec<u8>) {
+        let mut p = self.latest_payload.lock().unwrap();
+        *p = Some(payload);
+        self.payload_lan_fetched.store(false, Ordering::Relaxed);
+    }
+
+    pub fn get_latest_payload(&self) -> Option<Vec<u8>> {
+        let p = self.latest_payload.lock().unwrap();
+        p.clone()
+    }
+
+    pub fn mark_payload_fetched_over_lan(&self) {
+        self.payload_lan_fetched.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_payload_fetched_over_lan(&self) -> bool {
+        self.payload_lan_fetched.load(Ordering::Relaxed)
     }
 
     pub fn persist_current_settings(&self) {

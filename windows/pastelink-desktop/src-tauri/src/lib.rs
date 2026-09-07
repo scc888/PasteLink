@@ -172,6 +172,13 @@ pub fn run() {
                     clip_write_rx,
                 );
 
+                // 2.5 启动局域网极速直连服务 (HTTP REST API + UDP 自动发现)
+                crate::core::lan::LanServer::start(
+                    app_handle.clone(),
+                    state.clone(),
+                    clip_write_tx.clone(),
+                );
+
                 // 3. 启动 BLE GATT Server
                 let state_for_ble = state.clone();
                 let app_for_ble = app_handle.clone();
@@ -189,7 +196,7 @@ pub fn run() {
                             rt.block_on(async move {
                                 while let Some(payload) = clip_send_rx.recv().await {
                                     let pin = state_for_ble.pairing_code.lock().unwrap().clone();
-                                    if let Err(e) = server.notify_payload(&app_for_ble, &payload, &pin) {
+                                    if let Err(e) = server.notify_payload(&app_for_ble, &payload, &pin, &state_for_ble) {
                                         log::warn!("[BLE] 广播推送异常: {}", e);
                                     }
                                 }

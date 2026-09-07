@@ -19,6 +19,7 @@
 		10010010 /* PasteLinkStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010010 /* PasteLinkStore.swift */; };
 		10010011 /* CryptoEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010011 /* CryptoEngine.swift */; };
 		10010012 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010012 /* LiveActivityManager.swift */; };
+		10010018 /* LANManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010018 /* LANManager.swift */; };
 		10010013 /* PasteIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010013 /* PasteIntents.swift */; };
 		10010014 /* PasteLinkActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20010014 /* PasteLinkActivityAttributes.swift */; };
 		10010015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20010015 /* Assets.xcassets */; };
@@ -69,6 +70,7 @@
 		20010010 /* PasteLinkStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteLinkStore.swift; sourceTree = "<group>"; };
 		20010011 /* CryptoEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoEngine.swift; sourceTree = "<group>"; };
 		20010012 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
+		20010018 /* LANManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANManager.swift; sourceTree = "<group>"; };
 		20010013 /* PasteIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteIntents.swift; sourceTree = "<group>"; };
 		20010014 /* PasteLinkActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteLinkActivityAttributes.swift; sourceTree = "<group>"; };
 		20010015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -151,6 +153,7 @@
 				20010010 /* PasteLinkStore.swift */,
 				20010011 /* CryptoEngine.swift */,
 				20010012 /* LiveActivityManager.swift */,
+				20010018 /* LANManager.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -297,6 +300,7 @@
 				10010010 /* PasteLinkStore.swift in Sources */,
 				10010011 /* CryptoEngine.swift in Sources */,
 				10010012 /* LiveActivityManager.swift in Sources */,
+				10010018 /* LANManager.swift in Sources */,
 				10010013 /* PasteIntents.swift in Sources */,
 				10010014 /* PasteLinkActivityAttributes.swift in Sources */,
 			);

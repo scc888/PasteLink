@@ -181,13 +181,14 @@ impl BleServer {
                                         if text.starts_with("PLK_AUTH_CHALLENGE:") {
                                             let challenge_id = text.strip_prefix("PLK_AUTH_CHALLENGE:").unwrap_or_default();
                                             log::info!("[BLE 🔐 配对握手] 收到来自 iPhone 的配对校验请求: {}", challenge_id);
-                                            let ack_text = format!("PLK_AUTH_SUCCESS:{}", challenge_id);
+                                            let local_ip = crate::core::lan::LanServer::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+                                            let ack_text = format!("PLK_AUTH_SUCCESS:{}:LAN:{}:52089", challenge_id, local_ip);
                                             if let Ok(ack_packet) = crate::core::crypto::CryptoEngine::encrypt(&ack_text, &key) {
                                                 if let Ok(writer) = DataWriter::new() {
                                                     let _ = writer.WriteBytes(&ack_packet);
                                                     if let Ok(buffer) = writer.DetachBuffer() {
                                                         let _ = notify_char_for_write.NotifyValueAsync(&buffer);
-                                                        log::info!("[BLE 🔐 配对握手] 已向 iPhone 回复认证成功确认包");
+                                                        log::info!("[BLE 🔐 配对握手] 已向 iPhone 回复认证成功确认包 (包含局域网高速通道: {}:52089)", local_ip);
                                                     }
                                                 }
                                             }
@@ -242,6 +243,7 @@ impl BleServer {
         app_handle: &AppHandle,
         payload: &crate::core::protocol::ClipboardPayload,
         pin: &str,
+        state: &crate::core::state::AppState,
     ) -> Result<u32> {
         let subscribers = self.notify_char.SubscribedClients()?;
         let count = subscribers.Size()?;
@@ -264,6 +266,9 @@ impl BleServer {
             anyhow::bail!("载荷过大 ({} 字节)，限制 10MB", encrypted_payload.len());
         }
 
+        // 将最新密文载荷缓存至 state，供 iPhone 局域网极速直连秒级拉取
+        state.set_latest_payload(encrypted_payload.clone());
+
         use std::sync::atomic::{AtomicU8, Ordering};
         static MSG_COUNTER: AtomicU8 = AtomicU8::new(1);
         let msg_id = MSG_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -272,6 +277,21 @@ impl BleServer {
         let is_image = matches!(payload, crate::core::protocol::ClipboardPayload::Image { .. });
 
         for (idx, chunk) in chunks.iter().enumerate() {
+            // 若 iPhone 已通过局域网极速通道拉取完成，立即终止后续慢速蓝牙分片，释放空口信道！
+            if state.is_payload_fetched_over_lan() {
+                log::info!("[BLE ⚡] iPhone 已通过局域网直连极速获取，成功跳过剩余 {} 个慢速蓝牙分片", total_chunks - idx);
+                let _ = app_handle.emit("transfer-progress", serde_json::json!({
+                    "is_active": false,
+                    "percent": 100,
+                    "total_bytes": encrypted_payload.len(),
+                    "transferred_chunks": total_chunks,
+                    "total_chunks": total_chunks,
+                    "item_type": if is_image { "image" } else { "text" },
+                    "direction": "send"
+                }));
+                break;
+            }
+
             let writer = DataWriter::new()?;
             writer.WriteBytes(chunk)?;
             let buffer = writer.DetachBuffer()?;
@@ -309,11 +329,12 @@ impl BleServer {
     }
 
     /// 向 iPhone 推送文本内容的轻量封装
-    pub fn notify_clipboard(&self, app_handle: &AppHandle, text: &str, pin: &str) -> Result<u32> {
+    pub fn notify_clipboard(&self, app_handle: &AppHandle, text: &str, pin: &str, state: &crate::core::state::AppState) -> Result<u32> {
         self.notify_payload(
             app_handle,
             &crate::core::protocol::ClipboardPayload::Text(text.to_string()),
             pin,
+            state,
         )
     }
 }

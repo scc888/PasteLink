@@ -194,4 +194,11 @@ final class BLEChunkReassembler {
         guard totalChunks > 0 else { return nil }
         return (receivedChunks.count, Int(totalChunks))
     }
+
+    /// 重置切片重组器状态 (例如当数据已通过局域网极速直连通道优先拉取完成时)
+    func reset() {
+        receivedChunks.removeAll()
+        lastUpdate = nil
+        totalChunks = 0
+    }
 }

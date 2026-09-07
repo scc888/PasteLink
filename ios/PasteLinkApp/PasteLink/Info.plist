@@ -43,5 +43,12 @@
 	<array>
 		<string>bluetooth-central</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PasteLink 使用局域网实现与电脑之间的极速端到端加密数据直连传输（无损图片秒级同步）</string>
 </dict>
 </plist>

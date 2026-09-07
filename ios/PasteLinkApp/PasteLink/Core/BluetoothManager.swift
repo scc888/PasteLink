@@ -257,11 +257,12 @@ final class BluetoothManager: NSObject, ObservableObject {
         currentTransfer = nil
     }
 
-    /// 向 Windows 发送文本 (自动使用 AES-256-GCM 加密与安全 MTU 分片)
+    /// 向 Windows 发送文本 (支持局域网极速直连与 BLE 双模无缝回退)
     func sendToWindows(text: String) {
-        guard let peripheral = connectedPeripheral,
-              let characteristic = writeCharacteristic
-        else {
+        let lanAvailable = LANManager.shared.isLanAvailable
+        let bleAvailable = (connectedPeripheral != nil && writeCharacteristic != nil)
+
+        guard lanAvailable || bleAvailable else {
             addLog("❌ 发送失败: 未连接或不可写")
             return
         }
@@ -278,6 +279,28 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
 
         let item = PasteLinkStore.shared.saveSentItem(text: text)
+
+        if lanAvailable {
+            Task {
+                let success = await LANManager.shared.sendPayloadOverLAN(encryptedData: encryptedData)
+                if success {
+                    self.addLog("⚡ [局域网极速推送] 文本已同步至 Windows [SHA: \(item.sha256.prefix(8))]")
+                    return
+                } else if bleAvailable {
+                    self.addLog("⚠️ [局域网推送未达] 自动降级为蓝牙 BLE 发送...")
+                    self.sendTextViaBLE(encryptedData: encryptedData, item: item)
+                }
+            }
+            return
+        }
+
+        if bleAvailable {
+            sendTextViaBLE(encryptedData: encryptedData, item: item)
+        }
+    }
+
+    private func sendTextViaBLE(encryptedData: Data, item: ClipboardItem) {
+        guard let peripheral = connectedPeripheral, let characteristic = writeCharacteristic else { return }
         let msgId = rollingMsgId
         rollingMsgId = rollingMsgId &+ 1
         let chunks = BLEChunkProtocol.fragment(data: encryptedData, msgId: msgId)
@@ -285,15 +308,16 @@ final class BluetoothManager: NSObject, ObservableObject {
         for chunk in chunks {
             peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
         }
-        addLog("📤 [分片加密] 已发送 \(encryptedData.count) 字节 (\(chunks.count) 分片) [SHA: \(item.sha256.prefix(8))]")
+        addLog("📤 [BLE 分片加密] 已发送 \(encryptedData.count) 字节 (\(chunks.count) 分片) [SHA: \(item.sha256.prefix(8))]")
     }
 
-    /// 向 Windows 发送无损 PNG 图片 (自动使用 PLKI 封装、AES-256-GCM 加密与 BLE 分片)
+    /// 向 Windows 发送无损 PNG 图片 (优先局域网极速直连秒级推送，无网络时无缝回退至 BLE)
     func sendImageToWindows(image: UIImage) {
-        guard let peripheral = connectedPeripheral,
-              let characteristic = writeCharacteristic
-        else {
-            addLog("❌ 发送图片失败: 未连接到电脑或不可写")
+        let lanAvailable = LANManager.shared.isLanAvailable
+        let bleAvailable = (connectedPeripheral != nil && writeCharacteristic != nil)
+
+        guard lanAvailable || bleAvailable else {
+            addLog("❌ 发送图片失败: 未连接到电脑 (局域网与蓝牙均不可用)")
             return
         }
 
@@ -319,11 +343,65 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
 
         let item = PasteLinkStore.shared.saveSentImage(pngData: pngData, width: Int(width), height: Int(height))
+
+        // 1. 优先使用局域网极速通道直传 (通常 < 0.1s 传输完成)
+        if lanAvailable {
+            addLog("⚡ [局域网极速推送] 正在直连 Windows 推送图片 (\(width)×\(height), \(pngData.count) 字节)...")
+            DispatchQueue.main.async {
+                self.currentTransfer = TransferState(
+                    direction: .sending,
+                    currentChunk: 1,
+                    totalChunks: 1,
+                    progressPercentage: 50,
+                    detailText: "⚡ 局域网极速直连推送中...",
+                    targetSha256: item.sha256
+                )
+            }
+
+            Task {
+                let success = await LANManager.shared.sendPayloadOverLAN(encryptedData: encryptedData)
+                if success {
+                    await MainActor.run {
+                        self.currentTransfer = TransferState(
+                            direction: .sending,
+                            currentChunk: 1,
+                            totalChunks: 1,
+                            progressPercentage: 100,
+                            detailText: "⚡ 局域网直连推送完成 (100%)",
+                            targetSha256: item.sha256
+                        )
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if self.currentTransfer?.targetSha256 == item.sha256 {
+                                self.currentTransfer = nil
+                            }
+                        }
+                    }
+                    self.addLog("✅ [局域网极速推送完成] 无损图片已秒级同步至 Windows 剪贴板 [SHA: \(item.sha256.prefix(8))]")
+                    return
+                } else {
+                    self.addLog("⚠️ [局域网直连失败] 自动无缝降级为蓝牙 BLE 分片传输...")
+                    if bleAvailable {
+                        self.sendImageViaBLE(encryptedData: encryptedData, item: item, width: width, height: height, pngByteCount: pngData.count)
+                    }
+                }
+            }
+            return
+        }
+
+        // 2. 蓝牙回退通道
+        if bleAvailable {
+            sendImageViaBLE(encryptedData: encryptedData, item: item, width: width, height: height, pngByteCount: pngData.count)
+        }
+    }
+
+    private func sendImageViaBLE(encryptedData: Data, item: ClipboardItem, width: UInt32, height: UInt32, pngByteCount: Int) {
+        guard let peripheral = connectedPeripheral, let characteristic = writeCharacteristic else { return }
+
         let msgId = rollingMsgId
         rollingMsgId = rollingMsgId &+ 1
         let chunks = BLEChunkProtocol.fragment(data: encryptedData, msgId: msgId)
 
-        addLog("📤 [图片推送] 开始向 Windows 推送无损图片 (\(width)×\(height), \(pngData.count) 字节, \(chunks.count) 分片)...")
+        addLog("📤 [BLE 分片推送] 开始向 Windows 推送无损图片 (\(width)×\(height), \(pngByteCount) 字节, \(chunks.count) 分片)...")
 
         DispatchQueue.main.async {
             self.currentTransfer = TransferState(
@@ -336,7 +414,6 @@ final class BluetoothManager: NSObject, ObservableObject {
             )
         }
 
-        // 申请后台任务保活，防止传输中切屏被挂起
         var bgTaskId: UIBackgroundTaskIdentifier = .invalid
         bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "PasteLinkSendImage") {
             UIApplication.shared.endBackgroundTask(bgTaskId)
@@ -350,7 +427,6 @@ final class BluetoothManager: NSObject, ObservableObject {
                 let current = index + 1
                 let pct = Int((Double(current) / Double(chunks.count)) * 100)
 
-                // 提升刷新平滑度：每 3 个分片或末尾分片向 UI 派发进度更新
                 if index % 3 == 0 || index == chunks.count - 1 {
                     DispatchQueue.main.async {
                         self.currentTransfer = TransferState(
@@ -379,39 +455,49 @@ final class BluetoothManager: NSObject, ObservableObject {
                     targetSha256: item.sha256
                 )
             }
-            // 延迟 1.5 秒后淡出进度条，使用户能看清传输已圆满完成
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 if self.currentTransfer?.targetSha256 == item.sha256 {
                     self.currentTransfer = nil
                 }
             }
-            self.addLog("✅ [图片推送完成] 已将无损图片同步至 Windows 剪贴板 [SHA: \(item.sha256.prefix(8))]")
+            self.addLog("✅ [BLE 图片推送完成] 已将无损图片同步至 Windows 剪贴板 [SHA: \(item.sha256.prefix(8))]")
             if bgTaskId != .invalid {
                 UIApplication.shared.endBackgroundTask(bgTaskId)
             }
         }
     }
 
-    /// 直接发送文本 (供 App Intent / 快捷指令调用，支持异步发送与自动重连排队)
+    /// 直接发送文本 (供 App Intent / 快捷指令调用，支持局域网极速直发与蓝牙自动重连排队)
     @discardableResult
     func sendDirectly(text: String) async -> Bool {
+        let pin = PasteLinkStore.shared.getPairingPIN()
+        guard let encryptedData = try? CryptoEngine.encrypt(text: text, pin: pin),
+              encryptedData.count <= 10 * 1024 * 1024
+        else {
+            return false
+        }
+
+        // 1. 优先局域网直发
+        if LANManager.shared.isLanAvailable {
+            let ok = await LANManager.shared.sendPayloadOverLAN(encryptedData: encryptedData)
+            if ok {
+                _ = PasteLinkStore.shared.saveSentItem(text: text)
+                addLog("⚡ [快捷指令/局域网] 已极速推送到 Windows")
+                return true
+            }
+        }
+
+        // 2. 蓝牙连接检查
         guard connectionState == .connected,
               let peripheral = connectedPeripheral,
               let characteristic = writeCharacteristic
         else {
             let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
             defaults.set(text, forKey: "pendingSendToWindows")
-            addLog("⚠️ 蓝牙暂未连接，已暂存待发文本")
+            addLog("⚠️ 电脑暂未连接，已暂存待发文本")
             if centralManager.state == .poweredOn && connectionState == .disconnected {
                 startScanning()
             }
-            return false
-        }
-
-        let pin = PasteLinkStore.shared.getPairingPIN()
-        guard let encryptedData = try? CryptoEngine.encrypt(text: text, pin: pin),
-              encryptedData.count <= 10 * 1024 * 1024
-        else {
             return false
         }
 
@@ -690,6 +776,9 @@ extension BluetoothManager: CBPeripheralDelegate {
             // 若连接到新设备且尚未配置 6 位配对码，自动弹出输入弹窗
             if PasteLinkStore.shared.getPairingPIN().isEmpty {
                 self.shouldShowPairingPrompt = true
+            } else {
+                // 已有安全码，主动发送握手以获取电脑局域网直连 IP/Port
+                self.requestLANEndpoint()
             }
 
             // 检查是否有快捷指令暂存的待发送内容
@@ -726,6 +815,19 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         guard let rawData = characteristic.value else { return }
+
+        // 检查是否为分片包头部
+        if rawData.count >= BLEChunkProtocol.headerSize, rawData.prefix(4) == BLEChunkProtocol.chunkMagic {
+            let total = rawData.subdata(in: 5..<7).withUnsafeBytes { $0.load(as: UInt16.self).bigEndian }
+            let index = rawData.subdata(in: 7..<9).withUnsafeBytes { $0.load(as: UInt16.self).bigEndian }
+
+            // 首个切片到达且包含多个切片，若局域网直连可用，立即触发并发极速拉取
+            if index == 0 && total > 1 && LANManager.shared.isLanAvailable {
+                Task {
+                    await self.tryFetchLatestOverLAN()
+                }
+            }
+        }
 
         // 经过分片重组器进行拼包
         let assembledData = chunkReassembler.process(packet: rawData)
@@ -769,7 +871,7 @@ extension BluetoothManager: CBPeripheralDelegate {
 
             // 尝试使用候选 PIN 解密握手成功确认包
             if let decrypted = CryptoEngine.decrypt(data: data, pin: authPin),
-               decrypted == "PLK_AUTH_SUCCESS:\(challengeID)"
+               decrypted.hasPrefix("PLK_AUTH_SUCCESS:\(challengeID)")
             {
                 self.pendingAuthContinuation = nil
                 self.pendingAuthPIN = nil
@@ -779,6 +881,7 @@ extension BluetoothManager: CBPeripheralDelegate {
                 }
                 PasteLinkStore.shared.savePairingPIN(authPin)
                 self.addLog("🎉 [配对握手] 配对校验成功！已建立 AES-256-GCM 信任通道")
+                self.extractAndConfigureLAN(from: decrypted)
                 cont.resume(returning: (true, "配对成功！"))
                 return
             }
@@ -793,6 +896,75 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
 
+        // 检查是否为电脑握手响应包 (包含局域网 IP / 端口)
+        if let text = String(data: decryptedRaw, encoding: .utf8), text.contains("PLK_AUTH_SUCCESS:") {
+            self.extractAndConfigureLAN(from: text)
+            return
+        }
+
+        self.handleDecryptedPayload(decryptedRaw, sourceDescription: "Windows (BLE)")
+    }
+
+    private var lastProcessedSha256: String?
+
+    /// 尝试通过局域网极速通道并发拉取最新剪贴板载荷
+    func tryFetchLatestOverLAN() async {
+        guard let encryptedData = await LANManager.shared.fetchLatestOverLAN() else {
+            return
+        }
+        let pin = PasteLinkStore.shared.getPairingPIN()
+        guard let decryptedRaw = CryptoEngine.decryptData(data: encryptedData, pin: pin), !decryptedRaw.isEmpty else {
+            return
+        }
+
+        // 成功获取：立即重置蓝牙分片重组器，丢弃剩余慢速分包
+        self.chunkReassembler.reset()
+
+        await MainActor.run {
+            self.currentTransfer = TransferState(
+                direction: .receiving,
+                currentChunk: 1,
+                totalChunks: 1,
+                progressPercentage: 100,
+                detailText: "⚡ 局域网极速直连同步完成 (100%)"
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                self.currentTransfer = nil
+            }
+        }
+
+        self.handleDecryptedPayload(decryptedRaw, sourceDescription: "局域网极速直连 ⚡")
+    }
+
+    /// 解析握手包中透传的 Windows 局域网地址
+    func extractAndConfigureLAN(from text: String) {
+        guard let range = text.range(of: ":LAN:") else { return }
+        let sub = String(text[range.upperBound...])
+        let parts = sub.components(separatedBy: ":")
+        if parts.count == 2, let port = Int(parts[1]) {
+            let ip = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            LANManager.shared.setDiscoveredEndpoint(ip: ip, port: port)
+            addLog("⚡ [局域网配置] 电脑直连通道 IP: \(ip):\(port) (经 BLE 握手透传)")
+        }
+    }
+
+    /// 主动向电脑索取局域网端点
+    func requestLANEndpoint() {
+        guard connectionState == .connected,
+              let peripheral = connectedPeripheral,
+              let characteristic = writeCharacteristic else { return }
+        let pin = PasteLinkStore.shared.getPairingPIN()
+        guard pin.count == 6 else { return }
+
+        let challengeID = "auto_lan"
+        let payload = "PLK_AUTH_CHALLENGE:\(challengeID)"
+        guard let encryptedData = try? CryptoEngine.encrypt(text: payload, pin: pin) else { return }
+        peripheral.writeValue(encryptedData, for: characteristic, type: .withResponse)
+        addLog("📡 [BLE] 已向电脑请求局域网端点对齐")
+    }
+
+    /// 处理已解密的剪贴板载荷 (统一供 BLE 重组完成与局域网极速直连拉取共用)
+    func handleDecryptedPayload(_ decryptedRaw: Data, sourceDescription: String = "Windows") {
         // 1. 优先检查是否为 PLKI 图像二进制封包
         if let (width, height, pngData) = CryptoEngine.unwrapImagePayload(data: decryptedRaw) {
             guard let uiImage = UIImage(data: pngData) else {
@@ -801,7 +973,14 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
 
             let item = PasteLinkStore.shared.saveReceivedImage(pngData: pngData, width: Int(width), height: Int(height))
-            addLog("🖼️ [已解密] 收到来自 Windows 的无损图片 (\(width)×\(height), \(pngData.count) 字节) [SHA: \(item.sha256.prefix(8))]")
+
+            // 幂等防重：若局域网与蓝牙几乎同时交付同一数据，避免重复震动与弹窗
+            if lastProcessedSha256 == item.sha256 {
+                return
+            }
+            lastProcessedSha256 = item.sha256
+
+            addLog("🖼️ [已解密] 收到来自 \(sourceDescription) 的无损图片 (\(width)×\(height), \(pngData.count) 字节) [SHA: \(item.sha256.prefix(8))]")
 
             DispatchQueue.main.async {
                 self.isAuthFailed = false
@@ -829,11 +1008,15 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
 
-        let preview = text.count > 25 ? String(text.prefix(25)) + "..." : text
         let item = PasteLinkStore.shared.saveReceivedItem(text: text)
-        addLog("📋 [已解密] 收到 Windows 剪贴板: \"\(preview)\" (\(data.count)B) [SHA: \(item.sha256.prefix(8))]")
+        if lastProcessedSha256 == item.sha256 {
+            return
+        }
+        lastProcessedSha256 = item.sha256
 
-        // 1. 更新 UI 属性与剪贴板
+        let preview = text.count > 25 ? String(text.prefix(25)) + "..." : text
+        addLog("📋 [已解密] 收到 \(sourceDescription) 剪贴板: \"\(preview)\" (\(decryptedRaw.count)B) [SHA: \(item.sha256.prefix(8))]")
+
         DispatchQueue.main.async {
             self.isAuthFailed = false
             self.lastReceivedText = text
@@ -841,10 +1024,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             UIPasteboard.general.string = text
         }
 
-        // 2. 刷新所有桌面与锁屏小组件
         WidgetCenter.shared.reloadAllTimelines()
-
-        // 3. 触发灵动岛 / 锁屏实时活动 (若用户在快捷形态中开启)
         LiveActivityManager.shared.showLiveActivity(
             text: text,
             deviceName: self.connectedDeviceName ?? "Windows 电脑"
