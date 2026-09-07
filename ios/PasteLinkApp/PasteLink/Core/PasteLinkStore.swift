@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
+import ImageIO
 import SwiftUI
+import UIKit
 
 /// 应用外观主题模式
 enum AppTheme: String, CaseIterable, Identifiable, Codable {
@@ -45,7 +47,7 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     var preview: String
     var isPinned: Bool
     var category: String // "url" | "code" | "text" | "image"
-    var imageData: String? // Base64 data URI
+    var imageData: String? // Base64 data URI (已废弃迁移，仅保留字段兼容旧版 JSON 反序列化)
     var width: Int?
     var height: Int?
     var fileSize: Int?
@@ -76,7 +78,9 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         self.preview = "[图片] \(width) × \(height) 像素"
         self.isPinned = isPinned
         self.category = "image"
-        self.imageData = "data:image/png;base64," + imagePNGData.base64EncodedString()
+        // 核心优化：彻底废除将数兆 Base64 塞入 UserDefaults 的反模式！
+        // 图片二进制由 PasteLinkStore 统一写入沙盒独立文件，此处保持 nil
+        self.imageData = nil
         self.width = width
         self.height = height
         self.fileSize = imagePNGData.count
@@ -122,11 +126,37 @@ struct PairedDevice: Identifiable, Codable, Equatable {
 final class PasteLinkStore: ObservableObject {
     static let shared = PasteLinkStore()
 
-    private let appGroupID = "group.com.pastelink.shared"
+    // MARK: - App Group 与磁盘沙盒路径定义
+    static let appGroupID = "group.com.pastelink.shared"
     private let maxDedupCount = 60
 
     private var defaults: UserDefaults {
-        UserDefaults(suiteName: appGroupID) ?? UserDefaults.standard
+        UserDefaults(suiteName: Self.appGroupID) ?? UserDefaults.standard
+    }
+
+    /// App Group 共享容器 URL
+    static var sharedContainerURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+    }
+
+    /// 图片独立存储目录 (App Group 共享容器优先，沙盒 Documents 兜底)
+    static var imagesDirectoryURL: URL {
+        let baseURL: URL
+        if let container = sharedContainerURL {
+            baseURL = container
+        } else {
+            baseURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        }
+        let dir = baseURL.appendingPathComponent("images", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return dir
+    }
+
+    /// 获取特定 SHA-256 图片的物理文件存储 URL
+    static func imageFileURL(for sha256: String) -> URL {
+        return imagesDirectoryURL.appendingPathComponent("\(sha256).png")
     }
 
     @Published var history: [ClipboardItem] = []
@@ -137,7 +167,31 @@ final class PasteLinkStore: ObservableObject {
     private init() {
         let storedLimit = defaults.integer(forKey: "maxHistoryCount")
         self.maxHistoryCount = storedLimit > 0 ? storedLimit : 10
-        self.history = getHistory()
+
+        let loadedItems = getHistory()
+        // 自动迁移旧版本存放在 UserDefaults 中的巨大 Base64 图片到独立沙盒磁盘文件并清理膨胀
+        var migratedItems = loadedItems
+        var didMigrate = false
+        for (i, item) in loadedItems.enumerated() {
+            if item.category == "image", let base64URI = item.imageData, !base64URI.isEmpty {
+                let base64 = base64URI.hasPrefix("data:image/png;base64,") ?
+                    String(base64URI.dropFirst("data:image/png;base64,".count)) : base64URI
+                if let rawData = Data(base64Encoded: base64) {
+                    let fileURL = Self.imageFileURL(for: item.sha256)
+                    if !FileManager.default.fileExists(atPath: fileURL.path) {
+                        try? rawData.write(to: fileURL, options: .atomic)
+                    }
+                }
+                migratedItems[i].imageData = nil
+                didMigrate = true
+            }
+        }
+
+        self.history = migratedItems
+        if didMigrate {
+            saveHistoryToDisk(migratedItems)
+        }
+
         let pin = getPairingPIN()
         self.pairedPIN = pin.isEmpty ? getLastEnteredPIN() : pin
 
@@ -311,19 +365,23 @@ final class PasteLinkStore: ObservableObject {
         let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "windows")
         _ = isDuplicateOrRecord(sha256: item.sha256)
 
-        // 预热内存图片缓存 (消除滚动卡顿)
+        // 1. 将原图写入独立沙盒磁盘文件，彻底解耦与 UserDefaults 的绑定
+        let fileURL = Self.imageFileURL(for: item.sha256)
+        try? pngData.write(to: fileURL, options: .atomic)
+
+        // 2. 预热内存图片缓存 (消除滚动卡顿)
         if let img = UIImage(data: pngData) {
             ImageCacheManager.shared.setImage(img, for: item.sha256, cost: pngData.count)
         }
 
-        // 存储共享图片文件与元数据，供 Intents / 快捷指令 / 外部 URL Scheme 读取
+        // 3. 存储共享图片文件与元数据，供 Intents / 快捷指令 / 外部 URL Scheme 读取
         defaults.set("image", forKey: "lastReceivedType")
         defaults.set(width, forKey: "lastReceivedImageWidth")
         defaults.set(height, forKey: "lastReceivedImageHeight")
         defaults.set(Date(), forKey: "lastReceivedTime")
         defaults.removeObject(forKey: "lastReceivedClipboard")
 
-        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+        if let containerURL = Self.sharedContainerURL {
             let imgURL = containerURL.appendingPathComponent("last_received_image.png")
             try? pngData.write(to: imgURL, options: .atomic)
         }
@@ -338,7 +396,8 @@ final class PasteLinkStore: ObservableObject {
 
         while items.count > maxHistoryCount {
             if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                items.remove(at: lastUnpinnedIndex)
+                let removed = items.remove(at: lastUnpinnedIndex)
+                cleanOrphanImageFile(for: removed, remainingItems: items)
             } else {
                 break
             }
@@ -353,7 +412,11 @@ final class PasteLinkStore: ObservableObject {
         let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "iphone")
         _ = isDuplicateOrRecord(sha256: item.sha256)
 
-        // 预热内存图片缓存
+        // 1. 将原图写入独立沙盒磁盘文件
+        let fileURL = Self.imageFileURL(for: item.sha256)
+        try? pngData.write(to: fileURL, options: .atomic)
+
+        // 2. 预热内存图片缓存
         if let img = UIImage(data: pngData) {
             ImageCacheManager.shared.setImage(img, for: item.sha256, cost: pngData.count)
         }
@@ -368,7 +431,8 @@ final class PasteLinkStore: ObservableObject {
 
         while items.count > maxHistoryCount {
             if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                items.remove(at: lastUnpinnedIndex)
+                let removed = items.remove(at: lastUnpinnedIndex)
+                cleanOrphanImageFile(for: removed, remainingItems: items)
             } else {
                 break
             }
@@ -376,6 +440,16 @@ final class PasteLinkStore: ObservableObject {
 
         saveHistoryToDisk(items)
         return newItem
+    }
+
+    private func cleanOrphanImageFile(for item: ClipboardItem, remainingItems: [ClipboardItem]) {
+        guard item.category == "image" else { return }
+        let hasReference = remainingItems.contains { $0.sha256 == item.sha256 }
+        if !hasReference {
+            ImageCacheManager.shared.removeImage(for: item.sha256)
+            let fileURL = Self.imageFileURL(for: item.sha256)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
     }
 
     func togglePin(id: String) {
@@ -389,9 +463,9 @@ final class PasteLinkStore: ObservableObject {
     func deleteItem(id: String) {
         var items = getHistory()
         if let target = items.first(where: { $0.id == id }) {
-            ImageCacheManager.shared.removeImage(for: target.sha256)
+            items.removeAll { $0.id == id }
+            cleanOrphanImageFile(for: target, remainingItems: items)
         }
-        items.removeAll { $0.id == id }
         saveHistoryToDisk(items)
     }
 
@@ -405,8 +479,14 @@ final class PasteLinkStore: ObservableObject {
     }
 
     func clearHistory() {
-        // 清空时保留置顶项目
-        let pinnedItems = getHistory().filter { $0.isPinned }
+        // 清空时保留置顶项目并清理未引用的磁盘图片
+        let items = getHistory()
+        let pinnedItems = items.filter { $0.isPinned }
+
+        for item in items where !item.isPinned {
+            cleanOrphanImageFile(for: item, remainingItems: pinnedItems)
+        }
+
         saveHistoryToDisk(pinnedItems)
         if pinnedItems.isEmpty {
             defaults.removeObject(forKey: "lastReceivedClipboard")
@@ -452,5 +532,84 @@ final class ImageCacheManager {
 
     func clear() {
         cache.removeAllObjects()
+    }
+
+    /// 高性能异步加载缩略图 (用于 Feed 流无卡顿渲染，使用 CGImageSource 硬件级降采样)
+    func loadThumbnailAsync(for item: ClipboardItem, maxPixelSize: CGFloat = 800, completion: @escaping (UIImage?) -> Void) {
+        // 1. 优先内存命中 (0ms 极速主线程返回)
+        if let cached = image(for: item.sha256) {
+            completion(cached)
+            return
+        }
+
+        // 2. 后台异步降采样解码，彻底避免主线程阻塞
+        DispatchQueue.global(qos: .userInitiated).async {
+            let fileURL = PasteLinkStore.imageFileURL(for: item.sha256)
+
+            // 优先从磁盘文件加载降采样缩略图
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                if let thumb = Self.downsample(imageAt: fileURL, maxPixelSize: maxPixelSize) {
+                    self.setImage(thumb, for: item.sha256, cost: Int(maxPixelSize * maxPixelSize * 4))
+                    DispatchQueue.main.async {
+                        completion(thumb)
+                    }
+                    return
+                }
+            }
+
+            // 尝试从 last_received_image.png 匹配
+            if let container = PasteLinkStore.sharedContainerURL {
+                let lastRecvURL = container.appendingPathComponent("last_received_image.png")
+                if FileManager.default.fileExists(atPath: lastRecvURL.path),
+                   let thumb = Self.downsample(imageAt: lastRecvURL, maxPixelSize: maxPixelSize) {
+                    self.setImage(thumb, for: item.sha256, cost: Int(maxPixelSize * maxPixelSize * 4))
+                    DispatchQueue.main.async {
+                        completion(thumb)
+                    }
+                    return
+                }
+            }
+
+            // 兜底兼容旧版 Base64
+            if let imgStr = item.imageData {
+                let base64 = imgStr.hasPrefix("data:image/png;base64,") ?
+                    String(imgStr.dropFirst("data:image/png;base64,".count)) : imgStr
+                if let rawData = Data(base64Encoded: base64) {
+                    try? rawData.write(to: fileURL, options: .atomic)
+                    if let thumb = Self.downsample(imageAt: fileURL, maxPixelSize: maxPixelSize) {
+                        self.setImage(thumb, for: item.sha256, cost: Int(maxPixelSize * maxPixelSize * 4))
+                        DispatchQueue.main.async {
+                            completion(thumb)
+                        }
+                        return
+                    }
+                }
+            }
+
+            DispatchQueue.main.async {
+                completion(nil)
+            }
+        }
+    }
+
+    /// 利用 CGImageSource 进行低内存消耗的硬件级降采样解码
+    private static func downsample(imageAt url: URL, maxPixelSize: CGFloat) -> UIImage? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
+            return nil
+        }
+
+        let downsampleOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ] as [CFString: Any] as CFDictionary
+
+        guard let downsampled = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions) else {
+            return nil
+        }
+
+        return UIImage(cgImage: downsampled)
     }
 }

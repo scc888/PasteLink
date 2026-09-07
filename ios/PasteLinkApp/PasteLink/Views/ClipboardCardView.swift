@@ -96,9 +96,9 @@ struct ClipboardCardView: View {
                 Spacer()
 
                 // 保存到相册 (仅图片类型显示)
-                if let uiImage = cachedImage {
+                if item.category == "image" {
                     Button {
-                        UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+                        saveImageToPhotosAlbum()
                     } label: {
                         Image(systemName: "square.and.arrow.down")
                             .font(.caption)
@@ -155,9 +155,9 @@ struct ClipboardCardView: View {
                 Label(item.category == "image" ? "复制图片到剪贴板" : "复制到系统剪贴板", systemImage: item.category == "image" ? "photo.on.rectangle" : "doc.on.clipboard")
             }
 
-            if let uiImage = cachedImage {
+            if item.category == "image" {
                 Button {
-                    UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+                    saveImageToPhotosAlbum()
                 } label: {
                     Label("保存图片到系统相册", systemImage: "square.and.arrow.down")
                 }
@@ -192,18 +192,10 @@ struct ClipboardCardView: View {
             return
         }
 
-        // 2. 否则切到后台异步线程解码，彻底避免阻塞 UI 主线程
-        guard let imgStr = item.imageData else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let base64 = imgStr.hasPrefix("data:image/png;base64,") ?
-                String(imgStr.dropFirst("data:image/png;base64,".count)) : imgStr
-            guard let rawData = Data(base64Encoded: base64),
-                  let decoded = UIImage(data: rawData) else {
-                return
-            }
-            ImageCacheManager.shared.setImage(decoded, for: item.sha256, cost: rawData.count)
-            DispatchQueue.main.async {
-                self.cachedImage = decoded
+        // 2. 委托 ImageCacheManager 极速硬件级降采样解码，彻底消除主线程卡顿
+        ImageCacheManager.shared.loadThumbnailAsync(for: item) { [id = item.id] image in
+            if self.item.id == id {
+                self.cachedImage = image
             }
         }
     }
@@ -229,11 +221,26 @@ struct ClipboardCardView: View {
         }
     }
 
+    private func saveImageToPhotosAlbum() {
+        let fileURL = PasteLinkStore.imageFileURL(for: item.sha256)
+        if let fullData = try? Data(contentsOf: fileURL), let fullImage = UIImage(data: fullData) {
+            UIImageWriteToSavedPhotosAlbum(fullImage, nil, nil, nil)
+        } else if let uiImage = cachedImage {
+            UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+        }
+    }
+
     private func triggerCopy() {
-        if item.category == "image", let uiImage = cachedImage {
-            UIPasteboard.general.image = uiImage
-            if let data = uiImage.pngData() {
-                UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+        if item.category == "image" {
+            let fileURL = PasteLinkStore.imageFileURL(for: item.sha256)
+            if let fullData = try? Data(contentsOf: fileURL), let fullImage = UIImage(data: fullData) {
+                UIPasteboard.general.image = fullImage
+                UIPasteboard.general.setData(fullData, forPasteboardType: "public.png")
+            } else if let uiImage = cachedImage {
+                UIPasteboard.general.image = uiImage
+                if let data = uiImage.pngData() {
+                    UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+                }
             }
         } else {
             onCopy(item)

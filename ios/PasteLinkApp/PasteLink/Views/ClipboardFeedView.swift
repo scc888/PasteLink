@@ -315,10 +315,16 @@ struct ClipboardFeedView: View {
                     ClipboardCardView(
                         item: item,
                         onCopy: { copied in
-                            if copied.category == "image", let memoryCached = ImageCacheManager.shared.image(for: copied.sha256) {
-                                UIPasteboard.general.image = memoryCached
-                                if let data = memoryCached.pngData() {
+                            if copied.category == "image" {
+                                let fileURL = PasteLinkStore.imageFileURL(for: copied.sha256)
+                                if let data = try? Data(contentsOf: fileURL), let img = UIImage(data: data) {
+                                    UIPasteboard.general.image = img
                                     UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+                                } else if let memoryCached = ImageCacheManager.shared.image(for: copied.sha256) {
+                                    UIPasteboard.general.image = memoryCached
+                                    if let data = memoryCached.pngData() {
+                                        UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+                                    }
                                 }
                             } else {
                                 UIPasteboard.general.string = copied.content
