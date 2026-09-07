@@ -47,6 +47,11 @@ struct ClipboardFeedView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
+                    // 0. 实时分片传输进度浮窗 (双向图片传输状态反馈)
+                    if let transfer = bluetooth.currentTransfer {
+                        transferProgressBanner(transfer: transfer)
+                    }
+
                     // 1. 顶部设备状态英雄卡片
                     DeviceBannerCard(bluetooth: bluetooth) {
                         isPairingSheetPresented = true
@@ -238,10 +243,54 @@ struct ClipboardFeedView: View {
         .opacity(bluetooth.connectionState == .connected ? 1.0 : 0.6)
     }
 
-    // MARK: - 历史流水列表
+    // MARK: - 实时传输进度条卡片
+
+    private func transferProgressBanner(transfer: TransferState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: transfer.direction.iconName)
+                    .font(.title2)
+                    .foregroundStyle(transfer.direction == .sending ? .blue : .green)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(transfer.direction.title)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.primary)
+
+                    Text(transfer.detailText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text("\(transfer.progressPercentage)%")
+                    .font(.subheadline.monospacedDigit().bold())
+                    .foregroundStyle(transfer.direction == .sending ? .blue : .green)
+            }
+
+            ProgressView(value: Double(transfer.progressPercentage), total: 100.0)
+                .tint(transfer.direction == .sending ? .blue : .green)
+                .scaleEffect(x: 1, y: 1.5, anchor: .center)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: (transfer.direction == .sending ? Color.blue : Color.green).opacity(0.12), radius: 8, y: 3)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke((transfer.direction == .sending ? Color.blue : Color.green).opacity(0.3), lineWidth: 1)
+        )
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: transfer)
+    }
+
+    // MARK: - 历史流水列表 (采用高性能 LazyVStack 消除滚动卡顿)
 
     private var historyStreamSection: some View {
-        VStack(spacing: 12) {
+        LazyVStack(spacing: 12) {
             if filteredItems.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "clipboard")
@@ -266,7 +315,14 @@ struct ClipboardFeedView: View {
                     ClipboardCardView(
                         item: item,
                         onCopy: { copied in
-                            UIPasteboard.general.string = copied.content
+                            if copied.category == "image", let memoryCached = ImageCacheManager.shared.image(for: copied.sha256) {
+                                UIPasteboard.general.image = memoryCached
+                                if let data = memoryCached.pngData() {
+                                    UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+                                }
+                            } else {
+                                UIPasteboard.general.string = copied.content
+                            }
                             let feedback = UINotificationFeedbackGenerator()
                             feedback.prepare()
                             feedback.notificationOccurred(.success)

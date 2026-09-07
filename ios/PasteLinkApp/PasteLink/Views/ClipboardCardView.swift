@@ -8,6 +8,7 @@ struct ClipboardCardView: View {
     var onDelete: (String) -> Void
 
     @State private var isCopiedAnimation: Bool = false
+    @State private var cachedImage: UIImage? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -45,14 +46,25 @@ struct ClipboardCardView: View {
             }
 
             // 卡片内容 (支持文本或无损图片缩略图)
-            if let uiImage = decodedImage {
+            if item.category == "image" {
                 VStack(alignment: .leading, spacing: 6) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 160)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .background(Color(.tertiarySystemBackground))
+                    if let uiImage = cachedImage {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxHeight: 160)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .background(Color(.tertiarySystemBackground))
+                    } else {
+                        // 异步解码占位骨架，彻底消除主线程阻塞
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(.tertiarySystemBackground))
+                                .frame(height: 120)
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
+                    }
 
                     HStack {
                         if let w = item.width, let h = item.height {
@@ -68,6 +80,9 @@ struct ClipboardCardView: View {
                         }
                     }
                 }
+                .task(id: item.sha256) {
+                    loadImageAsync()
+                }
             } else {
                 Text(item.content)
                     .font(.subheadline)
@@ -81,7 +96,7 @@ struct ClipboardCardView: View {
                 Spacer()
 
                 // 保存到相册 (仅图片类型显示)
-                if let uiImage = decodedImage {
+                if let uiImage = cachedImage {
                     Button {
                         UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
                     } label: {
@@ -140,7 +155,7 @@ struct ClipboardCardView: View {
                 Label(item.category == "image" ? "复制图片到剪贴板" : "复制到系统剪贴板", systemImage: item.category == "image" ? "photo.on.rectangle" : "doc.on.clipboard")
             }
 
-            if let uiImage = decodedImage {
+            if let uiImage = cachedImage {
                 Button {
                     UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
                 } label: {
@@ -168,14 +183,29 @@ struct ClipboardCardView: View {
         }
     }
 
-    private var decodedImage: UIImage? {
-        guard item.category == "image",
-              let imgStr = item.imageData,
-              let rawData = Data(base64Encoded: imgStr.replacingOccurrences(of: "data:image/png;base64,", with: ""))
-        else {
-            return nil
+    private func loadImageAsync() {
+        guard item.category == "image" else { return }
+
+        // 1. 优先从内存缓存中获取 (0ms 极速命中)
+        if let memoryCached = ImageCacheManager.shared.image(for: item.sha256) {
+            self.cachedImage = memoryCached
+            return
         }
-        return UIImage(data: rawData)
+
+        // 2. 否则切到后台异步线程解码，彻底避免阻塞 UI 主线程
+        guard let imgStr = item.imageData else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let base64 = imgStr.hasPrefix("data:image/png;base64,") ?
+                String(imgStr.dropFirst("data:image/png;base64,".count)) : imgStr
+            guard let rawData = Data(base64Encoded: base64),
+                  let decoded = UIImage(data: rawData) else {
+                return
+            }
+            ImageCacheManager.shared.setImage(decoded, for: item.sha256, cost: rawData.count)
+            DispatchQueue.main.async {
+                self.cachedImage = decoded
+            }
+        }
     }
 
     private var categoryBadge: some View {
@@ -200,8 +230,11 @@ struct ClipboardCardView: View {
     }
 
     private func triggerCopy() {
-        if let uiImage = decodedImage {
+        if item.category == "image", let uiImage = cachedImage {
             UIPasteboard.general.image = uiImage
+            if let data = uiImage.pngData() {
+                UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+            }
         } else {
             onCopy(item)
         }

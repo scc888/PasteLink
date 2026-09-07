@@ -14,6 +14,34 @@ struct DiscoveredDevice: Identifiable {
     let isPasteLinkCandidate: Bool
 }
 
+/// 实时分片传输状态模型 (供 UI 渲染进度条与动效)
+struct TransferState: Equatable {
+    enum Direction: Equatable {
+        case sending
+        case receiving
+
+        var title: String {
+            switch self {
+            case .sending: return "正在向 Windows 推送无损图片"
+            case .receiving: return "正在接收来自 Windows 的图片"
+            }
+        }
+
+        var iconName: String {
+            switch self {
+            case .sending: return "arrow.up.circle.fill"
+            case .receiving: return "arrow.down.circle.fill"
+            }
+        }
+    }
+
+    var direction: Direction
+    var currentChunk: Int
+    var totalChunks: Int
+    var progressPercentage: Int // 0..100
+    var detailText: String
+}
+
 /// BLE Central 管理器
 ///
 /// 负责扫描、连接 Windows 端的 PasteLink GATT Server,
@@ -50,6 +78,9 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     /// 当前连接状态
     @Published var connectionState: ConnectionState = .disconnected
+
+    /// 实时传输状态 (用于驱动前台进度条浮窗)
+    @Published var currentTransfer: TransferState? = nil
 
     /// 状态文本
     @Published var statusText: String = "未连接"
@@ -222,6 +253,7 @@ final class BluetoothManager: NSObject, ObservableObject {
             connectionState = .disconnected
             statusText = "已手动断开"
         }
+        currentTransfer = nil
     }
 
     /// 向 Windows 发送文本 (自动使用 AES-256-GCM 加密与安全 MTU 分片)
@@ -292,6 +324,16 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         addLog("📤 [图片推送] 开始向 Windows 推送无损图片 (\(width)×\(height), \(pngData.count) 字节, \(chunks.count) 分片)...")
 
+        DispatchQueue.main.async {
+            self.currentTransfer = TransferState(
+                direction: .sending,
+                currentChunk: 0,
+                totalChunks: chunks.count,
+                progressPercentage: 0,
+                detailText: "准备推送 (0/\(chunks.count) 分片)"
+            )
+        }
+
         // 申请后台任务保活，防止传输中切屏被挂起
         var bgTaskId: UIBackgroundTaskIdentifier = .invalid
         bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "PasteLinkSendImage") {
@@ -303,11 +345,29 @@ final class BluetoothManager: NSObject, ObservableObject {
             guard let self else { return }
             for (index, chunk) in chunks.enumerated() {
                 peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+                let current = index + 1
+                let pct = Int((Double(current) / Double(chunks.count)) * 100)
+
+                // 提升刷新平滑度：每 3 个分片或末尾分片向 UI 派发进度更新
+                if index % 3 == 0 || index == chunks.count - 1 {
+                    DispatchQueue.main.async {
+                        self.currentTransfer = TransferState(
+                            direction: .sending,
+                            currentChunk: current,
+                            totalChunks: chunks.count,
+                            progressPercentage: pct,
+                            detailText: "\(current)/\(chunks.count) 分片 (\(pct)%)"
+                        )
+                    }
+                }
+
                 if index % 20 == 0 || index == chunks.count - 1 {
-                    let pct = Int((Double(index + 1) / Double(chunks.count)) * 100)
-                    self.addLog("📤 [图片推送进度] \(pct)% (\(index + 1)/\(chunks.count) 分片)")
+                    self.addLog("📤 [图片推送进度] \(pct)% (\(current)/\(chunks.count) 分片)")
                 }
                 Thread.sleep(forTimeInterval: 0.008)
+            }
+            DispatchQueue.main.async {
+                self.currentTransfer = nil
             }
             self.addLog("✅ [图片推送完成] 已将无损图片同步至 Windows 剪贴板 [SHA: \(item.sha256.prefix(8))]")
             if bgTaskId != .invalid {
@@ -520,6 +580,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         statusText = isManualDisconnect ? "已手动断开" : "已断开连接 · 等待重连"
         connectedDeviceName = nil
         writeCharacteristic = nil
+        currentTransfer = nil
 
         // 仅在非手动断开（如意外掉线、距离过远）时触发自动后台重连
         if !isManualDisconnect {
@@ -651,8 +712,28 @@ extension BluetoothManager: CBPeripheralDelegate {
         guard let rawData = characteristic.value else { return }
 
         // 经过分片重组器进行拼包
-        guard let data = chunkReassembler.process(packet: rawData) else {
+        let assembledData = chunkReassembler.process(packet: rawData)
+
+        // 接收进度实时反馈 (分片总数 > 1 时视为大文件/图片分片传输)
+        if let progress = chunkReassembler.progress, progress.total > 1 {
+            let pct = Int((Double(progress.received) / Double(progress.total)) * 100)
+            DispatchQueue.main.async {
+                self.currentTransfer = TransferState(
+                    direction: .receiving,
+                    currentChunk: progress.received,
+                    totalChunks: progress.total,
+                    progressPercentage: pct,
+                    detailText: "\(progress.received)/\(progress.total) 分片 (\(pct)%)"
+                )
+            }
+        }
+
+        guard let data = assembledData else {
             return
+        }
+
+        DispatchQueue.main.async {
+            self.currentTransfer = nil
         }
 
         // 1. 优先检查是否处于配对校验握手响应流程中

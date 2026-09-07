@@ -311,6 +311,11 @@ final class PasteLinkStore: ObservableObject {
         let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "windows")
         _ = isDuplicateOrRecord(sha256: item.sha256)
 
+        // 预热内存图片缓存 (消除滚动卡顿)
+        if let img = UIImage(data: pngData) {
+            ImageCacheManager.shared.setImage(img, for: item.sha256, cost: pngData.count)
+        }
+
         // 存储共享图片文件与元数据，供 Intents / 快捷指令 / 外部 URL Scheme 读取
         defaults.set("image", forKey: "lastReceivedType")
         defaults.set(width, forKey: "lastReceivedImageWidth")
@@ -348,6 +353,11 @@ final class PasteLinkStore: ObservableObject {
         let item = ClipboardItem(imagePNGData: pngData, width: width, height: height, source: "iphone")
         _ = isDuplicateOrRecord(sha256: item.sha256)
 
+        // 预热内存图片缓存
+        if let img = UIImage(data: pngData) {
+            ImageCacheManager.shared.setImage(img, for: item.sha256, cost: pngData.count)
+        }
+
         var items = getHistory()
         let isPreviouslyPinned = items.first(where: { $0.sha256 == item.sha256 })?.isPinned ?? false
         var newItem = item
@@ -378,6 +388,9 @@ final class PasteLinkStore: ObservableObject {
 
     func deleteItem(id: String) {
         var items = getHistory()
+        if let target = items.first(where: { $0.id == id }) {
+            ImageCacheManager.shared.removeImage(for: target.sha256)
+        }
         items.removeAll { $0.id == id }
         saveHistoryToDisk(items)
     }
@@ -397,6 +410,7 @@ final class PasteLinkStore: ObservableObject {
         saveHistoryToDisk(pinnedItems)
         if pinnedItems.isEmpty {
             defaults.removeObject(forKey: "lastReceivedClipboard")
+            ImageCacheManager.shared.clear()
         }
     }
 
@@ -407,5 +421,36 @@ final class PasteLinkStore: ObservableObject {
         DispatchQueue.main.async {
             self.history = items
         }
+    }
+}
+
+// MARK: - 内存图片高性能缓存管理器
+
+/// 内存图片高性能缓存管理器 (消除列表滑动卡顿与反复 Base64/PNG 解码)
+final class ImageCacheManager {
+    static let shared = ImageCacheManager()
+
+    private let cache = NSCache<NSString, UIImage>()
+
+    private init() {
+        // 最多缓存 50 张历史图片，总大小上限为 120MB 内存
+        cache.countLimit = 50
+        cache.totalCostLimit = 120 * 1024 * 1024
+    }
+
+    func image(for sha256: String) -> UIImage? {
+        return cache.object(forKey: sha256 as NSString)
+    }
+
+    func setImage(_ image: UIImage, for sha256: String, cost: Int = 0) {
+        cache.setObject(image, forKey: sha256 as NSString, cost: cost)
+    }
+
+    func removeImage(for sha256: String) {
+        cache.removeObject(forKey: sha256 as NSString)
+    }
+
+    func clear() {
+        cache.removeAllObjects()
     }
 }
