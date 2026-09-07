@@ -314,6 +314,7 @@ struct ClipboardFeedView: View {
                 ForEach(filteredItems) { item in
                     ClipboardCardView(
                         item: item,
+                        transferState: bluetooth.currentTransfer?.targetSha256 == item.sha256 ? bluetooth.currentTransfer : nil,
                         onCopy: { copied in
                             if copied.category == "image" {
                                 let fileURL = PasteLinkStore.imageFileURL(for: copied.sha256)

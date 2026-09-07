@@ -3,6 +3,7 @@ import SwiftUI
 /// 单条剪贴板卡片视图
 struct ClipboardCardView: View {
     let item: ClipboardItem
+    var transferState: TransferState? = nil
     var onCopy: (ClipboardItem) -> Void
     var onTogglePin: (String) -> Void
     var onDelete: (String) -> Void
@@ -64,6 +65,31 @@ struct ClipboardCardView: View {
                             ProgressView()
                                 .scaleEffect(0.8)
                         }
+                    }
+
+                    // 进度条渲染：当本张图片处于发送/上传中时直接呈现在卡片内
+                    if let transfer = transferState {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Label(transfer.progressPercentage == 100 ? "已同步至 Windows" : "正在发送到电脑...", systemImage: transfer.progressPercentage == 100 ? "checkmark.circle.fill" : "arrow.up.circle.fill")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(transfer.progressPercentage == 100 ? .green : .blue)
+                                Spacer()
+                                Text(transfer.detailText)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(transfer.progressPercentage == 100 ? .green : .blue)
+                            }
+
+                            ProgressView(value: Double(transfer.progressPercentage), total: 100)
+                                .tint(transfer.progressPercentage == 100 ? .green : .blue)
+                        }
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill((transfer.progressPercentage == 100 ? Color.green : Color.blue).opacity(0.08))
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .animation(.easeInOut(duration: 0.2), value: transfer.progressPercentage)
                     }
 
                     HStack {

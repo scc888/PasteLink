@@ -40,6 +40,7 @@ struct TransferState: Equatable {
     var totalChunks: Int
     var progressPercentage: Int // 0..100
     var detailText: String
+    var targetSha256: String? = nil
 }
 
 /// BLE Central 管理器
@@ -330,7 +331,8 @@ final class BluetoothManager: NSObject, ObservableObject {
                 currentChunk: 0,
                 totalChunks: chunks.count,
                 progressPercentage: 0,
-                detailText: "准备推送 (0/\(chunks.count) 分片)"
+                detailText: "准备推送 (0/\(chunks.count) 分片)",
+                targetSha256: item.sha256
             )
         }
 
@@ -356,7 +358,8 @@ final class BluetoothManager: NSObject, ObservableObject {
                             currentChunk: current,
                             totalChunks: chunks.count,
                             progressPercentage: pct,
-                            detailText: "\(current)/\(chunks.count) 分片 (\(pct)%)"
+                            detailText: "\(current)/\(chunks.count) 分片 (\(pct)%)",
+                            targetSha256: item.sha256
                         )
                     }
                 }
@@ -367,7 +370,20 @@ final class BluetoothManager: NSObject, ObservableObject {
                 Thread.sleep(forTimeInterval: 0.008)
             }
             DispatchQueue.main.async {
-                self.currentTransfer = nil
+                self.currentTransfer = TransferState(
+                    direction: .sending,
+                    currentChunk: chunks.count,
+                    totalChunks: chunks.count,
+                    progressPercentage: 100,
+                    detailText: "推送完成 (100%)",
+                    targetSha256: item.sha256
+                )
+            }
+            // 延迟 1.5 秒后淡出进度条，使用户能看清传输已圆满完成
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.currentTransfer?.targetSha256 == item.sha256 {
+                    self.currentTransfer = nil
+                }
             }
             self.addLog("✅ [图片推送完成] 已将无损图片同步至 Windows 剪贴板 [SHA: \(item.sha256.prefix(8))]")
             if bgTaskId != .invalid {
