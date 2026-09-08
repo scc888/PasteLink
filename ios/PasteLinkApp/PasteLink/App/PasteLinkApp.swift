@@ -18,7 +18,7 @@ struct PasteLinkApp: App {
                 .preferredColorScheme(store.appTheme.colorScheme)
                 .onChange(of: scenePhase) { newPhase in
                     if newPhase == .active {
-                        // 保证前台激活时灵动岛通道就绪
+                        // 保证前台激活时灵动岛状态与连接状态对齐：已连接常驻，未连接自动退出
                         LiveActivityManager.shared.ensureActivityStarted()
                     }
                 }

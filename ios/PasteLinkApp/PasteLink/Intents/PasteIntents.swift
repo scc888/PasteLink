@@ -374,7 +374,8 @@ struct CopyFromWidgetIntent: AppIntent {
                         AudioServicesPlaySystemSound(1519)
                     }
 
-                    // 复制完成后收起灵动岛
+                    // 复制完成后收起灵动岛并记录主动收起时间，防止 App 激活瞬间反弹
+                    defaults.set(Date().timeIntervalSince1970, forKey: "lastDismissedAt")
                     for activity in Activity<PasteLinkActivityAttributes>.activities {
                         await activity.end(nil, dismissalPolicy: .immediate)
                     }
@@ -390,7 +391,8 @@ struct CopyFromWidgetIntent: AppIntent {
                 AudioServicesPlaySystemSound(1519)
             }
 
-            // 复制完成后收起灵动岛
+            // 复制完成后收起灵动岛并记录主动收起时间，防止 App 激活瞬间反弹
+            defaults.set(Date().timeIntervalSince1970, forKey: "lastDismissedAt")
             for activity in Activity<PasteLinkActivityAttributes>.activities {
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
@@ -512,7 +514,8 @@ struct CopyFromLiveActivityIntent: LiveActivityIntent {
             }
         }
 
-        // 复制成功后自动收起灵动岛
+        // 复制成功后自动收起灵动岛并记录主动收起时间，防止 App 激活瞬间反弹
+        defaults.set(Date().timeIntervalSince1970, forKey: "lastDismissedAt")
         for activity in Activity<PasteLinkActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }

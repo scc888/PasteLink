@@ -77,8 +77,13 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     // MARK: - Published 属性
 
-    /// 当前连接状态
-    @Published var connectionState: ConnectionState = .disconnected
+    /// 当前连接状态 (变更时联动灵动岛生命周期：已连接常驻，非连接退出)
+    @Published var connectionState: ConnectionState = .disconnected {
+        didSet {
+            guard oldValue != connectionState else { return }
+            handleConnectionStateChange(from: oldValue, to: connectionState)
+        }
+    }
 
     /// 实时传输状态 (用于驱动前台进度条浮窗)
     @Published var currentTransfer: TransferState? = nil
@@ -87,7 +92,15 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var statusText: String = "未连接"
 
     /// 配对码解密认证是否失败 (提示用户核对 6 位 PIN 码)
-    @Published var isAuthFailed: Bool = false
+    @Published var isAuthFailed: Bool = false {
+        didSet {
+            if isAuthFailed {
+                LiveActivityManager.shared.endCurrentActivity()
+            } else if connectionState == .connected {
+                LiveActivityManager.shared.startActivityIfConnected(deviceName: connectedDeviceName ?? "Windows 电脑")
+            }
+        }
+    }
 
     /// 是否触发自动弹出配对码输入弹窗 (新设备连接或未配置配对码时)
     @Published var shouldShowPairingPrompt: Bool = false
@@ -255,6 +268,20 @@ final class BluetoothManager: NSObject, ObservableObject {
             statusText = "已手动断开"
         }
         currentTransfer = nil
+    }
+
+    /// 响应连接状态切换，实现灵动岛智能联动：真正连接时显示，非连接状态自动退出
+    private func handleConnectionStateChange(from oldState: ConnectionState, to newState: ConnectionState) {
+        switch newState {
+        case .connected:
+            let deviceName = connectedDeviceName ?? "Windows 电脑"
+            addLog("🏝️ [BLE] 已真正连接，智能启动灵动岛")
+            LiveActivityManager.shared.startActivityIfConnected(deviceName: deviceName)
+
+        case .disconnected, .scanning, .connecting:
+            addLog("🏝️ [BLE] 非连接状态 (\(newState))，自动退出灵动岛")
+            LiveActivityManager.shared.endCurrentActivity()
+        }
     }
 
     /// 向 Windows 发送文本 (支持局域网极速直连与 BLE 双模无缝回退)
@@ -882,9 +909,20 @@ extension BluetoothManager: CBPeripheralDelegate {
                 PasteLinkStore.shared.savePairingPIN(authPin)
                 self.addLog("🎉 [配对握手] 配对校验成功！已建立 AES-256-GCM 信任通道")
                 self.extractAndConfigureLAN(from: decrypted)
+                LiveActivityManager.shared.startActivityIfConnected(deviceName: self.connectedDeviceName ?? "Windows 电脑", force: true)
                 cont.resume(returning: (true, "配对成功！"))
                 return
             }
+        }
+
+        // 检查电脑端是否主动通知配对失效 / PIN码已变更
+        if let plain = String(data: data, encoding: .utf8), plain == "PLK_AUTH_FAILED" {
+            addLog("🔑 [配对失效] 电脑端安全码已重置，请重新输入配对码")
+            DispatchQueue.main.async {
+                self.isAuthFailed = true
+                self.shouldShowPairingPrompt = true
+            }
+            return
         }
 
         let pin = PasteLinkStore.shared.getPairingPIN()

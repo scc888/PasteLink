@@ -24,7 +24,8 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     }
 
     static func calculateSHA256(text: String) -> String {
-        let inputData = Data(text.utf8)
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let inputData = Data(normalized.utf8)
         let hashed = SHA256.hash(data: inputData)
         return hashed.compactMap { String(format: "%02x", $0) }.joined()
     }

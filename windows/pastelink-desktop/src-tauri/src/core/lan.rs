@@ -9,12 +9,45 @@ use crate::core::crypto::CryptoEngine;
 pub struct LanServer;
 
 impl LanServer {
-    /// 获取本机首选局域网 IPv4 地址 (通过本地 UDP 路由解析，离线亦可获取局域网 IP)
+    /// 获取本机首选局域网 IPv4 地址 (支持外网直连推导与离线局域网网络适配器解析)
     pub fn get_local_ip() -> Option<String> {
-        let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-        s.connect("8.8.8.8:80").ok()?;
-        let addr = s.local_addr().ok()?;
-        Some(addr.ip().to_string())
+        // 1. 优先通过 UDP 路由快速探测 (覆盖常见国内国外公共 DNS)
+        let probe_addrs = ["8.8.8.8:80", "114.114.114.114:80", "1.1.1.1:80"];
+        for target in probe_addrs {
+            if let Ok(s) = std::net::UdpSocket::bind("0.0.0.0:0") {
+                if s.connect(target).is_ok() {
+                    if let Ok(local_addr) = s.local_addr() {
+                        let ip = local_addr.ip();
+                        if let std::net::IpAddr::V4(v4) = ip {
+                            if !v4.is_loopback() && !v4.is_link_local() {
+                                return Some(v4.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 离线/纯内网兜底：通过计算机名解析已绑定的私有局域网网卡 IP
+        use std::net::ToSocketAddrs;
+        if let Ok(hostname) = std::env::var("COMPUTERNAME") {
+            if let Ok(addrs) = format!("{}:0", hostname).to_socket_addrs() {
+                for addr in addrs {
+                    if let std::net::SocketAddr::V4(v4) = addr {
+                        let ip = v4.ip();
+                        let octets = ip.octets();
+                        let is_private = (octets[0] == 10)
+                            || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                            || (octets[0] == 192 && octets[1] == 168);
+                        if is_private && !ip.is_loopback() && !ip.is_link_local() {
+                            return Some(ip.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// 启动局域网极速直连服务器 (HTTP REST API + UDP 自动发现)
@@ -26,65 +59,88 @@ impl LanServer {
         let tcp_port: u16 = 52089;
         let udp_port: u16 = 52088;
 
-        // 1. 启动 UDP 局域网广播自动发现监听 (支持电脑无蓝牙模式)
-        tokio::spawn(async move {
-            let socket = match UdpSocket::bind(format!("0.0.0.0:{}", udp_port)).await {
-                Ok(s) => {
-                    s.set_broadcast(true).unwrap_or(());
-                    log::info!("[LAN 📡] UDP 服务发现就绪 (监听端口: {})", udp_port);
-                    s
-                }
-                Err(e) => {
-                    log::warn!("[LAN] UDP 端口 {} 绑定失败: {}", udp_port, e);
-                    return;
-                }
-            };
-
-            let mut buf = [0u8; 1024];
-            loop {
-                if let Ok((len, peer)) = socket.recv_from(&mut buf).await {
-                    let msg = String::from_utf8_lossy(&buf[..len]);
-                    if msg.starts_with("PASTELINK_DISCOVER") {
-                        let local_ip = Self::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-                        let response = format!(
-                            "PASTELINK_OFFER:{{\"ip\":\"{}\",\"port\":{},\"name\":\"Windows 电脑\"}}",
-                            local_ip, tcp_port
-                        );
-                        let _ = socket.send_to(response.as_bytes(), peer).await;
-                        log::info!("[LAN 📡] 响应来自 {} 的局域网发现广播", peer);
+        std::thread::Builder::new()
+            .name("pastelink-lan-server".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        log::error!("[LAN] 创建 Tokio Runtime 失败: {}", e);
+                        return;
                     }
-                }
-            }
-        });
+                };
 
-        // 2. 启动 TCP 局域网极速直传 HTTP 服务
-        let rx_channel = Arc::new(on_receive_tx);
-        tokio::spawn(async move {
-            let listener = match TcpListener::bind(format!("0.0.0.0:{}", tcp_port)).await {
-                Ok(l) => {
-                    log::info!("[LAN ⚡] TCP 极速直连服务就绪 (监听端口: {})", tcp_port);
-                    l
-                }
-                Err(e) => {
-                    log::error!("[LAN] TCP 端口 {} 绑定失败: {}", tcp_port, e);
-                    return;
-                }
-            };
-
-            loop {
-                if let Ok((mut stream, peer)) = listener.accept().await {
-                    let state = state.clone();
-                    let app = app_handle.clone();
-                    let rx = rx_channel.clone();
-
+                rt.block_on(async move {
+                    // 1. 启动 UDP 局域网广播自动发现监听 (支持电脑无蓝牙模式)
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_client(&mut stream, peer, state, app, rx).await {
-                            log::debug!("[LAN] 客户端处理完成: {}", e);
+                        let socket = match UdpSocket::bind(format!("0.0.0.0:{}", udp_port)).await {
+                            Ok(s) => {
+                                s.set_broadcast(true).unwrap_or(());
+                                log::info!("[LAN 📡] UDP 服务发现就绪 (监听端口: {})", udp_port);
+                                s
+                            }
+                            Err(e) => {
+                                log::warn!("[LAN] UDP 端口 {} 绑定失败: {}", udp_port, e);
+                                return;
+                            }
+                        };
+
+                        let mut buf = [0u8; 1024];
+                        loop {
+                            if let Ok((len, peer)) = socket.recv_from(&mut buf).await {
+                                let msg = String::from_utf8_lossy(&buf[..len]);
+                                if msg.starts_with("PASTELINK_DISCOVER") {
+                                    let local_ip = Self::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+                                    let response = format!(
+                                        "PASTELINK_OFFER:{{\"ip\":\"{}\",\"port\":{},\"name\":\"Windows 电脑\"}}",
+                                        local_ip, tcp_port
+                                    );
+                                    let _ = socket.send_to(response.as_bytes(), peer).await;
+                                    log::info!("[LAN 📡] 响应来自 {} 的局域网发现广播", peer);
+                                }
+                            }
                         }
                     });
-                }
-            }
-        });
+
+                    // 2. 启动 TCP 局域网极速直传 HTTP 服务
+                    let rx_channel = Arc::new(on_receive_tx);
+                    let listener = match TcpListener::bind(format!("0.0.0.0:{}", tcp_port)).await {
+                        Ok(l) => {
+                            log::info!("[LAN ⚡] TCP 极速直连服务就绪 (监听端口: {})", tcp_port);
+                            l
+                        }
+                        Err(e) => {
+                            log::error!("[LAN] TCP 端口 {} 绑定失败: {}", tcp_port, e);
+                            return;
+                        }
+                    };
+
+                    loop {
+                        match listener.accept().await {
+                            Ok((mut stream, peer)) => {
+                                let state = state.clone();
+                                let app = app_handle.clone();
+                                let rx = rx_channel.clone();
+
+                                tokio::spawn(async move {
+                                    if let Err(e) = Self::handle_client(&mut stream, peer, state, app, rx).await {
+                                        log::debug!("[LAN] 客户端处理完成: {}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                log::warn!("[LAN] 接受 TCP 连接失败: {}", e);
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            }
+                        }
+                    }
+                });
+            })
+            .expect("Failed to spawn LanServer thread");
     }
 
     /// 处理 HTTP 客户端连接 (纯异步零框架，极致轻量与高安全性)

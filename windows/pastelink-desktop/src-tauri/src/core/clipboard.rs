@@ -30,6 +30,8 @@ impl ClipboardManager {
 
             let mut last_text_hash = String::new();
             let mut last_image_hash = String::new();
+            #[cfg(windows)]
+            let mut last_seq = unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() };
 
             if let Ok(init_text) = clipboard.get_text() {
                 if !init_text.is_empty() {
@@ -53,11 +55,13 @@ impl ClipboardManager {
                 }
             }
 
-            log::info!("[Clipboard] 监听守护线程已启动 (支持纯文本与无损图像)");
+            log::info!("[Clipboard] 监听守护线程已启动 (支持纯文本与无损图像，已启用硬件事件节流)");
 
             loop {
                 // 1. 处理从 iPhone 接收到的写入请求 (文字或图像)
+                let mut wrote_from_iphone = false;
                 while let Ok(incoming) = clip_write_rx.try_recv() {
+                    wrote_from_iphone = true;
                     match incoming {
                         ClipboardPayload::Text(iphone_text) => {
                             if iphone_text.is_empty() {
@@ -110,6 +114,31 @@ impl ClipboardManager {
                             let _ = app_handle.emit("clipboard-updated", item);
                             last_image_hash = hash;
                         }
+                    }
+                }
+
+                #[cfg(windows)]
+                {
+                    let current_seq = unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+                    if current_seq != 0 {
+                        let is_same_seq = current_seq == last_seq;
+                        last_seq = current_seq;
+
+                        if wrote_from_iphone {
+                            // 刚刚向系统剪贴板写入了 iPhone 传入的数据，同步序列号并直接跳过当前轮询以防回读
+                            thread::sleep(Duration::from_millis(250));
+                            continue;
+                        }
+
+                        if is_same_seq {
+                            // 核心性能守护：剪贴板序列号未改变，说明系统未发生任何复制事件！
+                            // 彻底避免每 250ms 反复对大图片进行高开销的 RGBA 抓取与 Deflate PNG 编码！
+                            thread::sleep(Duration::from_millis(250));
+                            continue;
+                        }
+                    } else if wrote_from_iphone {
+                        thread::sleep(Duration::from_millis(250));
+                        continue;
                     }
                 }
 

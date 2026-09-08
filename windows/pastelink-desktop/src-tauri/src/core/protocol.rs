@@ -135,9 +135,10 @@ pub fn detect_item_type(text: &str) -> &'static str {
     "text"
 }
 
-/// 计算文本的 SHA-256 哈希值用于去重
+/// 计算文本的 SHA-256 哈希值用于去重 (统一将 \r\n 标准化为 \n，消除跨系统差异)
 pub fn calculate_sha256(text: &str) -> String {
-    calculate_sha256_bytes(text.as_bytes())
+    let normalized = text.replace("\r\n", "\n");
+    calculate_sha256_bytes(normalized.as_bytes())
 }
 
 /// 生成安全预览文本

@@ -93,7 +93,7 @@ struct HardwareIntegrationView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("灵动岛 & 锁屏实时活动")
                             .font(.subheadline)
-                        Text("Windows 复制时自动在灵动岛展示预览，点击一键粘贴")
+                        Text("仅在与电脑建立连接时常驻显示，断开连接自动退出")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -120,7 +120,7 @@ struct HardwareIntegrationView: View {
 
             if liveActivityManager.isDynamicIslandEnabled {
                 Button {
-                    liveActivityManager.showLiveActivity(text: "https://pastelink.app · 测试预览", deviceName: "Windows PC")
+                    liveActivityManager.showLiveActivity(text: "https://pastelink.app · 测试预览", deviceName: "Windows PC", force: true)
                 } label: {
                     Label("立即测试弹出灵动岛", systemImage: "sparkles")
                         .font(.subheadline)

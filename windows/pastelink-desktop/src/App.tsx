@@ -1119,7 +1119,7 @@ export default function App() {
           <span className="pulse-dot" />
           <span>BLE 5.0 · 端到端安全加密</span>
         </div>
-        <span className="footer-ver">v1.0.0</span>
+        <span className="footer-ver">v1.1.0</span>
       </footer>
 
       {/* 查看详情弹窗 Modal */}
