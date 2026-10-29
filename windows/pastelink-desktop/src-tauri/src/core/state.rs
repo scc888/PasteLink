@@ -3,12 +3,14 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 
 use std::path::PathBuf;
 
 const MAX_HISTORY: usize = 30;
 const MAX_DEDUP_HASHES: usize = 50;
+const LAN_HEARTBEAT_TTL: Duration = Duration::from_secs(25);
 
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct PersistentSettings {
@@ -55,6 +57,7 @@ pub struct AppState {
     pub is_paused: Arc<AtomicBool>,
     pub ignore_password_manager: Arc<AtomicBool>,
     pub connected_devices_count: Arc<AtomicU32>,
+    pub lan_last_seen: Arc<Mutex<Option<Instant>>>,
     pub recent_items: Arc<Mutex<VecDeque<ClipboardItem>>>,
     pub pairing_code: Arc<Mutex<String>>,
     pub dedup_hashes: Arc<Mutex<VecDeque<String>>>,
@@ -69,6 +72,7 @@ pub struct StatusPayload {
     pub ignore_password_manager: bool,
     pub autostart_enabled: bool,
     pub connected_devices: u32,
+    pub lan_connected: bool,
     pub pairing_code: String,
     pub recent_items: Vec<ClipboardItem>,
 }
@@ -93,6 +97,7 @@ impl AppState {
             is_paused: Arc::new(AtomicBool::new(false)),
             ignore_password_manager: Arc::new(AtomicBool::new(ignore_pwd)),
             connected_devices_count: Arc::new(AtomicU32::new(0)),
+            lan_last_seen: Arc::new(Mutex::new(None)),
             recent_items: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))),
             pairing_code: Arc::new(Mutex::new(initial_pin.clone())),
             dedup_hashes: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_DEDUP_HASHES))),
@@ -164,6 +169,20 @@ impl AppState {
         self.connected_devices_count.load(Ordering::SeqCst)
     }
 
+    pub fn mark_lan_seen(&self) {
+        *self.lan_last_seen.lock().unwrap() = Some(Instant::now());
+    }
+
+    pub fn clear_lan_seen(&self) {
+        *self.lan_last_seen.lock().unwrap() = None;
+    }
+
+    pub fn is_lan_connected(&self) -> bool {
+        self.lan_last_seen.lock().unwrap()
+            .map(|last| last.elapsed() < LAN_HEARTBEAT_TTL)
+            .unwrap_or(false)
+    }
+
     /// 检查哈希是否已存在（去重与防回环）
     pub fn is_duplicate_or_record(&self, sha256: &str) -> bool {
         let mut hashes = self.dedup_hashes.lock().unwrap();
@@ -178,14 +197,23 @@ impl AppState {
     }
 
     /// 添加一条剪贴板记录
-    pub fn add_item(&self, item: ClipboardItem) {
+    pub fn add_item(&self, mut item: ClipboardItem) {
         let mut items = self.recent_items.lock().unwrap();
-        // 移除相同 hash 的旧项（提升至顶部）
+        item.is_pinned |= items.iter().any(|i| i.sha256 == item.sha256 && i.is_pinned);
         items.retain(|i| i.sha256 != item.sha256);
-        if items.len() >= MAX_HISTORY {
-            items.pop_back();
-        }
         items.push_front(item);
+        Self::trim_unpinned_history(&mut items);
+    }
+
+    fn trim_unpinned_history(items: &mut VecDeque<ClipboardItem>) {
+        let mut unpinned_count = 0;
+        items.retain(|item| {
+            if item.is_pinned {
+                return true;
+            }
+            unpinned_count += 1;
+            unpinned_count <= MAX_HISTORY
+        });
     }
 
     pub fn delete_item(&self, id: &str) {
@@ -203,6 +231,7 @@ impl AppState {
                 break;
             }
         }
+        Self::trim_unpinned_history(&mut items);
         is_pinned
     }
 
@@ -231,6 +260,7 @@ impl AppState {
             ignore_password_manager: self.should_ignore_password_manager(),
             autostart_enabled,
             connected_devices: self.get_connected_devices(),
+            lan_connected: self.is_lan_connected(),
             pairing_code: code,
             recent_items: items,
         }
@@ -240,6 +270,92 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_state() -> AppState {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        AppState::new(tx)
+    }
+
+    #[test]
+    fn history_capacity_never_evicts_pinned_items() {
+        let state = test_state();
+        let pinned = ClipboardItem::new("keep this".into(), "windows");
+        state.add_item(pinned.clone());
+        state.toggle_pin_item(&pinned.id);
+        for i in 0..MAX_HISTORY + 5 {
+            state.add_item(ClipboardItem::new(format!("entry {i}"), "windows"));
+        }
+        let items = state.recent_items.lock().unwrap();
+        assert!(items.iter().any(|i| i.id == pinned.id && i.is_pinned));
+        assert_eq!(items.iter().filter(|i| !i.is_pinned).count(), MAX_HISTORY);
+        assert!(!items.iter().any(|i| i.content == "entry 0"));
+    }
+
+    #[test]
+    fn repeated_content_preserves_its_pin_and_updates_the_entry() {
+        let state = test_state();
+        let original = ClipboardItem::new("same content".into(), "windows");
+        state.add_item(original.clone());
+        state.toggle_pin_item(&original.id);
+        let repeat = ClipboardItem::new("same content".into(), "iphone");
+        state.add_item(repeat.clone());
+        let items = state.recent_items.lock().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, repeat.id);
+        assert_eq!(items[0].source, "iphone");
+        assert!(items[0].is_pinned);
+    }
+
+    #[test]
+    fn all_pinned_history_still_accepts_a_new_unpinned_entry() {
+        let state = test_state();
+        for i in 0..MAX_HISTORY {
+            let item = ClipboardItem::new(format!("pinned {i}"), "windows");
+            state.add_item(item.clone());
+            state.toggle_pin_item(&item.id);
+        }
+        state.add_item(ClipboardItem::new("new".into(), "iphone"));
+        let items = state.recent_items.lock().unwrap();
+        assert_eq!(items.iter().filter(|i| i.is_pinned).count(), MAX_HISTORY);
+        assert_eq!(items[0].content, "new");
+    }
+
+    #[test]
+    fn unpinning_reapplies_the_unpinned_history_limit() {
+        let state = test_state();
+        let oldest = ClipboardItem::new("old pin".into(), "windows");
+        state.add_item(oldest.clone());
+        state.toggle_pin_item(&oldest.id);
+        for i in 0..MAX_HISTORY {
+            state.add_item(ClipboardItem::new(format!("new {i}"), "windows"));
+        }
+        assert!(state.recent_items.lock().unwrap().iter().any(|i| i.id == oldest.id && i.is_pinned));
+        assert!(!state.toggle_pin_item(&oldest.id));
+        let items = state.recent_items.lock().unwrap();
+        assert_eq!(items.len(), MAX_HISTORY);
+        assert!(!items.iter().any(|i| i.id == oldest.id));
+    }
+
+    #[test]
+    fn status_reports_lan_unavailable_before_first_heartbeat() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let state = AppState::new(tx);
+        let status = serde_json::to_value(state.get_status_payload()).unwrap();
+        assert_eq!(status.get("lan_connected"), Some(&serde_json::Value::Bool(false)));
+    }
+
+    #[test]
+    fn lan_heartbeat_becomes_available_and_expires() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let state = AppState::new(tx);
+        state.mark_lan_seen();
+        assert!(state.is_lan_connected());
+        *state.lan_last_seen.lock().unwrap() = Some(Instant::now() - LAN_HEARTBEAT_TTL);
+        assert!(!state.is_lan_connected());
+        state.mark_lan_seen();
+        state.clear_lan_seen();
+        assert!(!state.is_lan_connected());
+    }
 
     #[test]
     fn test_app_state_operations() {

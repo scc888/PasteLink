@@ -225,13 +225,27 @@ pub const MAX_CHUNK_PAYLOAD: usize = 480;
 ///
 /// 分片包头格式: `[PLKC (4B)] + [msg_id (1B)] + [total_chunks (2B be)] + [chunk_index (2B be)] + [flags (1B)] + [payload (<=480B)]` (共 10 字节)
 pub fn fragment_payload(data: &[u8], msg_id: u8) -> Vec<Vec<u8>> {
+    fragment_payload_with_limit(data, msg_id, MAX_CHUNK_PAYLOAD + 10)
+        .expect("payload exceeds BLE fragmentation limits")
+}
+
+/// Respect the subscriber's maximum notification size, including the 10-byte header.
+pub fn fragment_payload_with_limit(data: &[u8], msg_id: u8, max_notification_size: usize) -> Result<Vec<Vec<u8>>, String> {
     if data.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let total_chunks = ((data.len() + MAX_CHUNK_PAYLOAD - 1) / MAX_CHUNK_PAYLOAD) as u16;
+    let payload_size = max_notification_size.saturating_sub(10).min(MAX_CHUNK_PAYLOAD);
+    if payload_size == 0 {
+        return Err("BLE notification size cannot fit the fragment header".into());
+    }
+    let total = data.len().div_ceil(payload_size);
+    if total > u16::MAX as usize {
+        return Err(format!("payload requires {} BLE fragments (maximum {})", total, u16::MAX));
+    }
+    let total_chunks = total as u16;
     let mut chunks = Vec::with_capacity(total_chunks as usize);
 
-    for (i, chunk_slice) in data.chunks(MAX_CHUNK_PAYLOAD).enumerate() {
+    for (i, chunk_slice) in data.chunks(payload_size).enumerate() {
         let mut packet = Vec::with_capacity(10 + chunk_slice.len());
         packet.extend_from_slice(CHUNK_MAGIC);
         packet.push(msg_id);
@@ -241,7 +255,7 @@ pub fn fragment_payload(data: &[u8], msg_id: u8) -> Vec<Vec<u8>> {
         packet.extend_from_slice(chunk_slice);
         chunks.push(packet);
     }
-    chunks
+    Ok(chunks)
 }
 
 /// BLE 分片重组状态机 (支持 u16 宽索引与长周期超时)
@@ -330,6 +344,22 @@ mod tests {
         let text = "Line 1\nLine 2\r\nLine 3";
         let preview = make_preview(text, 50);
         assert_eq!(preview, "Line 1 ↵ Line 2 ↵ Line 3");
+    }
+
+    #[test]
+    fn image_fragments_fit_a_small_ble_notification_and_reassemble() {
+        let image = wrap_image_payload(&vec![0xAB; 1024], 32, 32);
+        let packets = fragment_payload_with_limit(&image, 7, 20).unwrap();
+        assert!(packets.iter().all(|packet| packet.len() <= 20));
+        let mut reassembler = ChunkReassembler::new();
+        let result = packets.iter().filter_map(|packet| reassembler.process_packet(packet)).last();
+        assert_eq!(result, Some(image));
+    }
+
+    #[test]
+    fn rejects_unusable_notification_size_and_fragment_overflow() {
+        assert!(fragment_payload_with_limit(&[1], 1, 10).is_err());
+        assert!(fragment_payload_with_limit(&vec![0; 65536], 1, 11).is_err());
     }
 
     #[test]

@@ -25,7 +25,7 @@ PasteLink 接收并存入 App Group
         ↓
 用户触发“PasteLink 一键复制”快捷指令 (快捷小组件 / Action Button / 轻点背面)
         ↓
-PasteLink Intent 返回最新文本 (ReturnsValue<String>)
+PasteLink Intent 返回最新内容 (ReturnsValue<IntentFile>)
         ↓
 Apple“复制到剪贴板”系统动作写入 iPhone 系统剪贴板
         ↓
@@ -61,21 +61,16 @@ Windows 端直接 Ctrl+V 粘贴
 2. 将获取到的文本作为参数，传给 PasteLink 提供的 **“发送到 Windows 剪贴板”** App Intent。
 
 ### 3.3 PasteLink Intent 单一职责规范：
-- `GetWindowsClipboardIntent`：从 `group.com.pastelink.shared` 读取并输出字符串，不调用 `UIPasteboard`，`openAppWhenRun = false`；
+- `GetWindowsClipboardIntent`：从 `group.com.pastelink.shared` 读取内容并返回 `IntentFile`（文字为 UTF-8 文本文件，图片为 PNG），不调用 `UIPasteboard`，`openAppWhenRun = false`；系统复制动作能否按预期粘贴文字和图片需分别在真机验证。
 - `SendToWindowsIntent`：接收 `text: String?` 参数，通过 BLE 发送或暂存队列，`openAppWhenRun = false`。
 
 ## 4. 一次安装流程
 
 iOS 不允许第三方 App 静默创建或修改用户的多步骤个人快捷指令，因此无法做到安装 PasteLink 后自动生成整条快捷指令。
 
-可以把用户操作降到一次安装：
+历史分享链接绑定了旧版应用标识，不能当作正式版 `com.pastelink.app` 的可用链接。正式版复制快捷指令尚无经验证的 iCloud 分享链接。用户可以在 iPhone 的“快捷指令”中新建上述两步，并在控制中心添加系统“快捷指令”控件来运行。
 
-1. 在 PasteLink App 内提供“一键直达添加”按钮；
-2. 点击按钮后打开预先制作并分享的 iCloud 快捷指令：
-   * **一键复制 (Windows → iPhone)**: `https://www.icloud.com/shortcuts/2ae405888020449e9547bea26588a270`
-   * **一键推送 (iPhone → Windows)**: `https://www.icloud.com/shortcuts/d23d135aac6146b1b848201c79e518e9`
-3. 系统自动弹出原生“添加快捷指令”面板，用户点击一次底部的“添加快捷指令”蓝色按钮；
-4. 安装完成后立即生效，无需用户手动编辑任何动作。
+仓库中的 `ios/shortcuts/PasteLink_Copy_Production.unsigned.shortcut` 是根据旧动作链替换为正式版包名的**未签名模板**，供后续在 Mac 上签名、导入并验证，不能当作可直接安装的成品。创建新的正式版快捷指令并通过 iCloud 分享后，可将分享链接填入 App 的自定义链接配置，用户仍需在系统界面确认添加。
 
 ## 5. 后续触发入口
 

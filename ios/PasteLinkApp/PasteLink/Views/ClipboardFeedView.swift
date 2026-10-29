@@ -4,6 +4,7 @@ import SwiftUI
 struct ClipboardFeedView: View {
     @ObservedObject var bluetooth: BluetoothManager
     @ObservedObject var store = PasteLinkStore.shared
+    @ObservedObject var lan = LANManager.shared
 
     @State private var searchText: String = ""
     @State private var selectedFilter: FilterType = .all
@@ -58,7 +59,7 @@ struct ClipboardFeedView: View {
                     }
 
                     // 1.5 发现附近的电脑设备待选区
-                    if bluetooth.connectionState != .connected && !bluetooth.discoveredDevices.isEmpty {
+                    if bluetooth.connectionState != .connected && !lan.isLanAvailable && !bluetooth.discoveredDevices.isEmpty {
                         discoveredDevicesSection
                     }
 
@@ -81,7 +82,7 @@ struct ClipboardFeedView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if !store.history.isEmpty {
+                    if store.history.contains(where: { !$0.isPinned }) {
                         Button {
                             showClearConfirm = true
                         } label: {
@@ -146,7 +147,7 @@ struct ClipboardFeedView: View {
     private var discoveredDevicesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("发现附近的 PasteLink 电脑 (点击连接)")
+                Text(bluetooth.connectionState == .connecting ? "正在连接电脑..." : "发现附近的 PasteLink 电脑")
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -183,9 +184,10 @@ struct ClipboardFeedView: View {
 
                     Spacer()
 
-                    Button("连接") {
+                    Button(bluetooth.isConnecting(to: device.peripheral) ? "连接中..." : "连接") {
                         bluetooth.connect(to: device.peripheral)
                     }
+                    .disabled(bluetooth.connectionState == .connecting)
                     .font(.caption.bold())
                     .buttonStyle(.borderedProminent)
                     .tint(.blue)
@@ -207,7 +209,7 @@ struct ClipboardFeedView: View {
                 triggerToast("📤 正在推送无损图片至 Windows...")
             } else if let clip = UIPasteboard.general.string, !clip.isEmpty {
                 bluetooth.sendToWindows(text: clip)
-                triggerToast("📤 已加密发送文本至 Windows")
+                triggerToast("📤 正在发送文本，请在电脑端确认接收")
             } else {
                 triggerToast("⚠️ 当前 iPhone 剪贴板为空")
             }
@@ -239,8 +241,8 @@ struct ClipboardFeedView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .shadow(color: Color.blue.opacity(0.3), radius: 8, y: 4)
         }
-        .disabled(bluetooth.connectionState != .connected)
-        .opacity(bluetooth.connectionState == .connected ? 1.0 : 0.6)
+        .disabled(bluetooth.connectionState != .connected && !lan.isLanAvailable)
+        .opacity(bluetooth.connectionState == .connected || lan.isLanAvailable ? 1.0 : 0.6)
     }
 
     // MARK: - 实时传输进度条卡片
@@ -318,14 +320,12 @@ struct ClipboardFeedView: View {
                         onCopy: { copied in
                             if copied.category == "image" {
                                 let fileURL = PasteLinkStore.imageFileURL(for: copied.sha256)
-                                if let data = try? Data(contentsOf: fileURL), let img = UIImage(data: data) {
-                                    UIPasteboard.general.image = img
+                                if let data = try? Data(contentsOf: fileURL), UIImage(data: data) != nil {
                                     UIPasteboard.general.setData(data, forPasteboardType: "public.png")
-                                } else if let memoryCached = ImageCacheManager.shared.image(for: copied.sha256) {
-                                    UIPasteboard.general.image = memoryCached
-                                    if let data = memoryCached.pngData() {
-                                        UIPasteboard.general.setData(data, forPasteboardType: "public.png")
-                                    }
+                                } else {
+                                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                    triggerToast("图片原文件不可用，请重新同步后再复制")
+                                    return false
                                 }
                             } else {
                                 UIPasteboard.general.string = copied.content
@@ -334,6 +334,7 @@ struct ClipboardFeedView: View {
                             feedback.prepare()
                             feedback.notificationOccurred(.success)
                             triggerToast("📋 已复制到系统剪贴板")
+                            return true
                         },
                         onTogglePin: { id in
                             store.togglePin(id: id)

@@ -56,22 +56,21 @@
 ```
 PasteLink/
 ├── windows/
-│   ├── pastelink-desktop/        # [生产级客户端] Tauri 2.0 + Rust + React 19 + TypeScript
-│   │   ├── src-tauri/            # Rust 核心中枢
-│   │   │   ├── Cargo.toml        # 依赖配置 (image, base64, aes-gcm, windows-rs)
-│   │   │   └── src/
-│   │   │       ├── core/
-│   │   │       │   ├── ble.rs        # BLE GATT Peripheral Server (Notify & WriteRequested)
-│   │   │       │   ├── clipboard.rs  # 双通道剪贴板监听 (Bitmap & Text 轮询监听)
-│   │   │       │   ├── crypto.rs     # 二进制/文本 AES-256-GCM 加解密驱动
-│   │   │       │   ├── protocol.rs   # 10 字节分片协议、PLKI 图像包装、类型识别
-│   │   │       │   └── state.rs      # AppState 状态机与配置持久化
-│   │   │       └── lib.rs            # Tauri 命令与事件路由中心
-│   │   └── src/                  # Fluent 2 现代托盘浮窗前端
-│   │       ├── App.tsx           # 主窗口、分片进度抽屉、多态卡片视口
-│   │       ├── App.css           # Fluent Design 设计系统与自适应主题
-│   │       └── types.ts          # 跨端数据契约与接口定义
-│   └── pastelink-demo/           # CLI 概念验证原型 (保留归档)
+│   └── pastelink-desktop/        # Tauri 2.0 + Rust + React 19 + TypeScript
+│       ├── src-tauri/            # Rust 核心中枢
+│       │   ├── Cargo.toml        # 依赖配置
+│       │   └── src/
+│       │       ├── core/
+│       │       │   ├── ble.rs        # BLE GATT 服务
+│       │       │   ├── clipboard.rs  # 剪贴板监听
+│       │       │   ├── crypto.rs     # AES-256-GCM 加解密
+│       │       │   ├── protocol.rs   # 分片协议与图像包装
+│       │       │   └── state.rs      # 状态机与配置
+│       │       └── lib.rs            # Tauri 命令与事件路由
+│       └── src/                  # 桌面浮窗前端
+│           ├── App.tsx
+│           ├── App.css
+│           └── types.ts
 │
 ├── ios/
 │   ├── PasteLinkApp/             # [生产级客户端] 纯正 iOS 现代消费级 App
@@ -83,7 +82,7 @@ PasteLink/
 │   │   │   └── Assets.xcassets/  # 高清应用图标
 │   │   ├── PasteLinkWidget/      # 桌面/锁屏/控制中心小组件
 │   │   └── PasteLink.xcodeproj/  # 独立生产级 Xcode 工程
-│   └── PasteLinkDemo/            # MVP 验证工程 (保留归档)
+│   └── shortcuts/                # 快捷指令模板与说明
 │
 └── docs/                         # 技术方案与设计分析规范
 ```

@@ -105,7 +105,7 @@ final class LiveActivityManager: ObservableObject {
 
         // 构造初次展示内容：优先提取最新剪贴板摘要，无历史记录则显示连接就绪
         let initialText: String
-        if let latest = PasteLinkStore.shared.clipboardHistory.first {
+        if let latest = PasteLinkStore.shared.history.first {
             if latest.category == "image" {
                 let w = latest.width ?? 0
                 let h = latest.height ?? 0

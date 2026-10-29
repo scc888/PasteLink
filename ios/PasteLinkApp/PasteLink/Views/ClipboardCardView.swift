@@ -1,15 +1,20 @@
 import SwiftUI
+import Photos
 
 /// 单条剪贴板卡片视图
 struct ClipboardCardView: View {
     let item: ClipboardItem
     var transferState: TransferState? = nil
-    var onCopy: (ClipboardItem) -> Void
+    var onCopy: (ClipboardItem) -> Bool
     var onTogglePin: (String) -> Void
     var onDelete: (String) -> Void
 
     @State private var isCopiedAnimation: Bool = false
     @State private var cachedImage: UIImage? = nil
+    @State private var imageLoadFinished: Bool = false
+    @State private var isSavingImage: Bool = false
+    @State private var showImageResult: Bool = false
+    @State private var imageResultMessage: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -56,6 +61,11 @@ struct ClipboardCardView: View {
                             .frame(maxHeight: 160)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .background(Color(.tertiarySystemBackground))
+                    } else if imageLoadFinished {
+                        Label("图片预览不可用，请重新同步", systemImage: "photo")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 120)
                     } else {
                         // 异步解码占位骨架，彻底消除主线程阻塞
                         ZStack {
@@ -132,15 +142,16 @@ struct ClipboardCardView: View {
                             .padding(6)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isSavingImage)
+                    .accessibilityLabel(isSavingImage ? "正在保存图片" : "保存原图到相册")
                 }
 
                 // 分享按钮
-                ShareLink(item: item.content) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(6)
-                }
+                shareAction
+                    .labelStyle(.iconOnly)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(6)
 
                 // 一键复制按钮
                 Button {
@@ -187,6 +198,7 @@ struct ClipboardCardView: View {
                 } label: {
                     Label("保存图片到系统相册", systemImage: "square.and.arrow.down")
                 }
+                .disabled(isSavingImage)
             }
 
             Button {
@@ -195,9 +207,7 @@ struct ClipboardCardView: View {
                 Label(item.isPinned ? "取消置顶" : "置顶保存", systemImage: item.isPinned ? "pin.slash" : "pin")
             }
 
-            ShareLink(item: item.content) {
-                Label("分享内容", systemImage: "square.and.arrow.up")
-            }
+            shareAction
 
             Divider()
 
@@ -207,14 +217,38 @@ struct ClipboardCardView: View {
                 Label("删除", systemImage: "trash")
             }
         }
+        .alert("图片操作", isPresented: $showImageResult) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(imageResultMessage)
+        }
+    }
+
+    @ViewBuilder
+    private var shareAction: some View {
+        if item.category == "image" {
+            let fileURL = PasteLinkStore.imageFileURL(for: item.sha256)
+            let available = FileManager.default.fileExists(atPath: fileURL.path)
+            ShareLink(item: fileURL) {
+                Label(available ? "分享原图" : "原图不可用，请重新同步", systemImage: "square.and.arrow.up")
+            }
+            .disabled(!available)
+        } else {
+            ShareLink(item: item.content) {
+                Label("分享内容", systemImage: "square.and.arrow.up")
+            }
+        }
     }
 
     private func loadImageAsync() {
         guard item.category == "image" else { return }
+        imageLoadFinished = false
+        cachedImage = nil
 
         // 1. 优先从内存缓存中获取 (0ms 极速命中)
         if let memoryCached = ImageCacheManager.shared.image(for: item.sha256) {
             self.cachedImage = memoryCached
+            self.imageLoadFinished = true
             return
         }
 
@@ -222,6 +256,7 @@ struct ClipboardCardView: View {
         ImageCacheManager.shared.loadThumbnailAsync(for: item) { [id = item.id] image in
             if self.item.id == id {
                 self.cachedImage = image
+                self.imageLoadFinished = true
             }
         }
     }
@@ -248,29 +283,38 @@ struct ClipboardCardView: View {
     }
 
     private func saveImageToPhotosAlbum() {
+        guard !isSavingImage else { return }
         let fileURL = PasteLinkStore.imageFileURL(for: item.sha256)
-        if let fullData = try? Data(contentsOf: fileURL), let fullImage = UIImage(data: fullData) {
-            UIImageWriteToSavedPhotosAlbum(fullImage, nil, nil, nil)
-        } else if let uiImage = cachedImage {
-            UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+        guard let fullData = try? Data(contentsOf: fileURL), UIImage(data: fullData) != nil else {
+            imageResultMessage = "图片原文件不可用，请重新同步后再保存。"
+            showImageResult = true
+            return
+        }
+        isSavingImage = true
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { authorization in
+            guard authorization == .authorized else {
+                DispatchQueue.main.async {
+                    isSavingImage = false
+                    imageResultMessage = "尚未获得添加照片的权限。请在系统设置中允许 PasteLink 添加照片后重试。"
+                    showImageResult = true
+                }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetCreationRequest.forAsset().addResource(with: .photo, data: fullData, options: nil)
+            }) { success, _ in
+                DispatchQueue.main.async {
+                    isSavingImage = false
+                    imageResultMessage = success ? "原图已保存到系统相册。" : "图片保存失败，请检查相册权限和设备剩余空间后重试。"
+                    showImageResult = true
+                }
+            }
         }
     }
 
     private func triggerCopy() {
-        if item.category == "image" {
-            let fileURL = PasteLinkStore.imageFileURL(for: item.sha256)
-            if let fullData = try? Data(contentsOf: fileURL), let fullImage = UIImage(data: fullData) {
-                UIPasteboard.general.image = fullImage
-                UIPasteboard.general.setData(fullData, forPasteboardType: "public.png")
-            } else if let uiImage = cachedImage {
-                UIPasteboard.general.image = uiImage
-                if let data = uiImage.pngData() {
-                    UIPasteboard.general.setData(data, forPasteboardType: "public.png")
-                }
-            }
-        } else {
-            onCopy(item)
-        }
+        // A cached thumbnail is not the original image. Only show success after the owner copied it.
+        guard onCopy(item) else { return }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
             isCopiedAnimation = true
         }
@@ -286,13 +330,13 @@ struct ClipboardCardView: View {
     VStack(spacing: 12) {
         ClipboardCardView(
             item: ClipboardItem(content: "https://github.com/pastelink/app", source: "windows", isPinned: true),
-            onCopy: { _ in },
+            onCopy: { _ in true },
             onTogglePin: { _ in },
             onDelete: { _ in }
         )
         ClipboardCardView(
             item: ClipboardItem(content: "const token = \"secret_key_12345\";", source: "iphone"),
-            onCopy: { _ in },
+            onCopy: { _ in true },
             onTogglePin: { _ in },
             onDelete: { _ in }
         )

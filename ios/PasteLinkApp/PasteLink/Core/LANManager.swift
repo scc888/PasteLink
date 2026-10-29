@@ -49,9 +49,13 @@ final class LANManager: ObservableObject {
         config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         self.urlSession = URLSession(configuration: config)
 
-        // 恢复上一次记忆的有效局域网地址
+        // 恢复上一次记忆的有效局域网地址 (过滤已失效的 TUN 虚拟保留网段或回环地址)
         if let saved = UserDefaults.standard.string(forKey: "lastKnownLanEndpoint"), !saved.isEmpty {
-            self.lanEndpoint = saved
+            if !saved.contains("198.18.") && !saved.contains("198.19.") && !saved.contains("127.0.0.1") {
+                self.lanEndpoint = saved
+            } else {
+                UserDefaults.standard.removeObject(forKey: "lastKnownLanEndpoint")
+            }
         }
 
         // 启动后台定期探活与网络切换检测
@@ -68,6 +72,12 @@ final class LANManager: ObservableObject {
     func setDiscoveredEndpoint(ip: String, port: Int = defaultTcpPort) {
         let cleanIp = ip.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanIp.isEmpty else { return }
+
+        // 拦截并过滤 TUN/VPN 虚拟网段与回环 IP，防止污染局域网通道
+        if cleanIp.hasPrefix("198.18.") || cleanIp.hasPrefix("198.19.") || cleanIp.hasPrefix("127.") {
+            logger.warning("⚠️ 忽略异常/虚拟网卡 IP: \(cleanIp)")
+            return
+        }
 
         let endpoint = "http://\(cleanIp):\(port)"
         if self.lanEndpoint != endpoint {
@@ -93,25 +103,35 @@ final class LANManager: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 1.2 // 超轻量快速探活
+        let pin = PasteLinkStore.shared.getPairingPIN()
+        guard pin.count == 6,
+              let proof = try? CryptoEngine.encryptData(data: Data("PLK_LAN_HEARTBEAT_V1".utf8), pin: pin) else {
+            await MainActor.run { self.isLanAvailable = false }
+            return false
+        }
+        request.setValue(proof.base64EncodedString(), forHTTPHeaderField: "X-PasteLink-Heartbeat")
 
         let startTime = Date()
         do {
             let (data, response) = try await urlSession.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode == 200,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               json["status"] as? String == "ok" {
+               json["status"] as? String == "ok",
+               (json["paired"] as? Bool ?? true) {
                 let latency = max(1, Int(Date().timeIntervalSince(startTime) * 1000))
                 let devName = json["device_name"] as? String ?? "Windows 电脑"
 
-                await MainActor.run {
+                return await MainActor.run {
+                    // Ignore a heartbeat started before the user changed or removed trust.
+                    guard PasteLinkStore.shared.getPairingPIN() == pin else { return false }
                     self.isLanAvailable = true
                     self.lanEndpoint = ep
                     self.lanDeviceName = devName
                     self.lastPingLatencyMs = latency
                     self.lastCheckedTime = Date()
                     UserDefaults.standard.set(ep, forKey: "lastKnownLanEndpoint")
+                    return true
                 }
-                return true
             }
         } catch {
             // 探活失败或超时 (如电脑睡眠、断开 Wi-Fi 或跨网段)

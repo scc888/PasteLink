@@ -1,5 +1,5 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Prevents console window on Windows across all build configurations, DO NOT REMOVE!!
+#![windows_subsystem = "windows"]
 
 fn main() {
     std::panic::set_hook(Box::new(|info| {
@@ -15,8 +15,12 @@ fn main() {
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "unknown location".to_string());
         let msg = format!("PANIC at {}: {}\nDetails: {:?}", location, payload, info);
-        let _ = std::fs::write("D:\\PasteLink\\panic.log", &msg);
-        eprintln!("{}", msg);
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let log_dir = std::path::PathBuf::from(appdata).join("PasteLink");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let _ = std::fs::write(log_dir.join("panic.log"), &msg);
+        }
+        let _ = std::fs::write("panic.log", &msg);
     }));
     pastelink_desktop_lib::run()
 }

@@ -394,6 +394,25 @@ html, body, #root {
   background-color: var(--text-dim);
 }
 
+.connection-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connection-channel {
+  padding: 3px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.connection-channel.available {
+  color: var(--accent-green-bright);
+  border-color: rgba(40, 167, 69, 0.35);
+}
+
 .toggle-switch {
   display: flex;
   align-items: center;
@@ -729,7 +748,9 @@ html, body, #root {
   transition: all 0.15s ease;
 }
 
-.clip-card:hover .card-actions {
+.clip-card:hover .card-actions,
+.clip-card:focus-within .card-actions,
+.clip-card.active-selected .card-actions {
   opacity: 1;
   transform: translateY(0);
 }
@@ -863,6 +884,8 @@ html, body, #root {
 
 /* Switch */
 .switch-control {
+  padding: 0;
+  box-sizing: content-box;
   width: 36px;
   height: 20px;
   background: var(--switch-off-bg);
@@ -872,6 +895,17 @@ html, body, #root {
   cursor: pointer;
   transition: all 0.2s ease;
   flex-shrink: 0;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .switch-control.on {

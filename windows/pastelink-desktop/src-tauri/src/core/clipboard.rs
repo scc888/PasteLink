@@ -12,6 +12,58 @@ use crate::core::state::AppState;
 
 pub struct ClipboardManager;
 
+#[cfg(all(test, windows))]
+mod clipboard_integration_tests {
+    #[test]
+    #[ignore = "requires an image already present on the Windows clipboard"]
+    fn reads_current_windows_clipboard_image() {
+        let mut clipboard = arboard::Clipboard::new().unwrap();
+        let image = super::read_clipboard_image(&mut clipboard).expect("clipboard image should be readable");
+        assert!(image.width > 0 && image.height > 0);
+    }
+}
+
+/// Some applications expose PNG under the MIME clipboard format while their DIB
+/// cannot be decoded by arboard. Preserve the normal path and use that PNG as a fallback.
+fn read_clipboard_image(clipboard: &mut arboard::Clipboard) -> Result<arboard::ImageData<'static>, arboard::Error> {
+    match clipboard.get_image() {
+        Ok(image) => Ok(image),
+        Err(arboard::Error::ClipboardOccupied) => Err(arboard::Error::ClipboardOccupied),
+        Err(original) => {
+            #[cfg(windows)]
+            {
+                let format = clipboard_win::register_format("image/png");
+                if let Some(format) = format {
+                    let guard = clipboard_win::Clipboard::new_attempts(10)
+                        .map_err(|_| arboard::Error::ClipboardOccupied)?;
+                    if clipboard_win::is_format_avail(format.get()) {
+                        let mut png = Vec::new();
+                        if let Err(error) = clipboard_win::raw::get_vec(format.get(), &mut png) {
+                            log::warn!("[Clipboard] 读取 image/png 格式失败: {}", error);
+                        } else {
+                            drop(guard);
+                            match image::load_from_memory_with_format(&png, image::ImageFormat::Png) {
+                                Ok(image) => {
+                                    let rgba = image.into_rgba8();
+                                    let (width, height) = rgba.dimensions();
+                                    log::info!("[Clipboard] 已通过 image/png 格式读取图片 ({}×{})", width, height);
+                                    return Ok(arboard::ImageData {
+                                        width: width as usize,
+                                        height: height as usize,
+                                        bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+                                    });
+                                }
+                                Err(error) => log::warn!("[Clipboard] 解码 image/png 格式失败: {}", error),
+                            }
+                        }
+                    }
+                }
+            }
+            Err(original)
+        }
+    }
+}
+
 impl ClipboardManager {
     /// 启动剪贴板监听后台线程 (支持文字与无损图像双向互通)
     pub fn spawn_listener(
@@ -41,7 +93,7 @@ impl ClipboardManager {
                 }
             }
 
-            if let Ok(init_img) = clipboard.get_image() {
+            if let Ok(init_img) = read_clipboard_image(&mut clipboard) {
                 if init_img.width > 0 && init_img.height > 0 {
                     if let Ok(png_bytes) = encode_rgba_to_png(
                         init_img.width as u32,
@@ -118,14 +170,14 @@ impl ClipboardManager {
                 }
 
                 #[cfg(windows)]
+                let current_seq = unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+                #[cfg(windows)]
                 {
-                    let current_seq = unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() };
                     if current_seq != 0 {
                         let is_same_seq = current_seq == last_seq;
-                        last_seq = current_seq;
-
                         if wrote_from_iphone {
                             // 刚刚向系统剪贴板写入了 iPhone 传入的数据，同步序列号并直接跳过当前轮询以防回读
+                            last_seq = current_seq;
                             thread::sleep(Duration::from_millis(250));
                             continue;
                         }
@@ -142,8 +194,17 @@ impl ClipboardManager {
                     }
                 }
 
+                let mut retry_read = false;
                 // 2. 检查本地 Windows 剪贴板图像变化
-                if let Ok(img) = clipboard.get_image() {
+                let image_result = read_clipboard_image(&mut clipboard);
+                if matches!(&image_result, Err(arboard::Error::ClipboardOccupied)) {
+                    retry_read = true;
+                } else if let Err(ref error) = image_result {
+                    if !matches!(error, arboard::Error::ContentNotAvailable) {
+                        log::warn!("[Clipboard] 读取图片失败: {}", error);
+                    }
+                }
+                if let Ok(img) = image_result {
                     if img.width > 0 && img.height > 0 {
                         if let Ok(png_bytes) = encode_rgba_to_png(
                             img.width as u32,
@@ -182,7 +243,15 @@ impl ClipboardManager {
                 }
 
                 // 3. 检查本地 Windows 剪贴板文本变化
-                if let Ok(current_text) = clipboard.get_text() {
+                let text_result = clipboard.get_text();
+                if matches!(&text_result, Err(arboard::Error::ClipboardOccupied)) {
+                    retry_read = true;
+                } else if let Err(ref error) = text_result {
+                    if !matches!(error, arboard::Error::ContentNotAvailable) {
+                        log::warn!("[Clipboard] 读取文本失败: {}", error);
+                    }
+                }
+                if let Ok(current_text) = text_result {
                     if !current_text.is_empty() {
                         let hash = calculate_sha256(&current_text);
                         if hash != last_text_hash {
@@ -211,6 +280,13 @@ impl ClipboardManager {
                     }
                 }
 
+                #[cfg(windows)]
+                if !retry_read {
+                    last_seq = current_seq;
+                }
+                if retry_read {
+                    log::debug!("[Clipboard] 系统剪贴板暂被占用，将重试本次变化");
+                }
                 thread::sleep(Duration::from_millis(250));
             }
         });

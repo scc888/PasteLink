@@ -53,18 +53,27 @@ struct DeviceBannerCard: View {
                 }
             }
 
-            // 第二行：特性指示标签 (双模极速 / 低功耗蓝牙 / 端到端加密)
+            // 同时展示两个独立的连接通道。
+            HStack(spacing: 12) {
+                featureBadge(
+                    icon: "wave.3.forward",
+                    text: bluetooth.connectionState == .connected ? "蓝牙已连接" : "蓝牙未连接",
+                    color: bluetooth.connectionState == .connected ? .blue : .secondary
+                )
+                featureBadge(
+                    icon: "wifi",
+                    text: lan.isLanAvailable ? "WLAN 可用" : "WLAN 不可用",
+                    color: lan.isLanAvailable ? .green : .secondary
+                )
+                Spacer(minLength: 0)
+            }
+
             HStack(spacing: 8) {
                 featureBadge(icon: "bolt.shield.fill", text: "AES-256 加密", color: .green)
-                if lan.isLanAvailable {
-                    featureBadge(icon: "bolt.horizontal.fill", text: "局域网极速 (\(lan.lastPingLatencyMs)ms)", color: .orange)
-                } else {
-                    featureBadge(icon: "wave.3.forward", text: "BLE 低延迟", color: .blue)
-                }
                 Spacer()
 
                 // 快捷操作按钮
-                if bluetooth.connectionState == .scanning {
+                if bluetooth.connectionState == .scanning || bluetooth.connectionState == .connecting {
                     ProgressView()
                         .scaleEffect(0.7)
                 } else if bluetooth.connectionState != .connected && !lan.isLanAvailable {
@@ -76,7 +85,7 @@ struct DeviceBannerCard: View {
                     .tint(.blue)
                     .clipShape(Capsule())
                 } else {
-                    Button(bluetooth.connectionState == .connected ? "断开" : "刷新") {
+                    Button(bluetooth.connectionState == .connected ? "断开蓝牙" : "刷新 WLAN") {
                         if bluetooth.connectionState == .connected {
                             bluetooth.disconnect()
                         } else {
@@ -108,7 +117,7 @@ struct DeviceBannerCard: View {
                 .foregroundStyle(color)
             Text(text)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(color)
         }
     }
 

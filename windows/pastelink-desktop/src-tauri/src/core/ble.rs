@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use windows::core::GUID;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
-    GattCharacteristicProperties, GattLocalCharacteristic, GattLocalCharacteristicParameters,
+    GattCharacteristicProperties, GattCommunicationStatus, GattLocalCharacteristic, GattLocalCharacteristicParameters,
     GattProtectionLevel, GattServiceProvider, GattServiceProviderAdvertisingParameters,
     GattWriteRequestedEventArgs,
 };
@@ -248,7 +248,14 @@ impl BleServer {
         let subscribers = self.notify_char.SubscribedClients()?;
         let count = subscribers.Size()?;
         if count == 0 {
+            log::warn!("[BLE] 没有已订阅设备，剪贴板内容未发送");
             return Ok(0);
+        }
+
+        let mut notification_limit = usize::MAX;
+        for index in 0..count {
+            let client = subscribers.GetAt(index)?;
+            notification_limit = notification_limit.min(client.MaxNotificationSize()? as usize);
         }
 
         let key = crate::core::crypto::CryptoEngine::derive_key(pin);
@@ -272,8 +279,10 @@ impl BleServer {
         use std::sync::atomic::{AtomicU8, Ordering};
         static MSG_COUNTER: AtomicU8 = AtomicU8::new(1);
         let msg_id = MSG_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let chunks = crate::core::protocol::fragment_payload(&encrypted_payload, msg_id);
+        let chunks = crate::core::protocol::fragment_payload_with_limit(&encrypted_payload, msg_id, notification_limit)
+            .map_err(|e| anyhow::anyhow!(e))?;
         let total_chunks = chunks.len();
+        log::info!("[BLE] 通知大小上限 {} 字节，准备发送 {} 个分片", notification_limit, total_chunks);
         let is_image = matches!(payload, crate::core::protocol::ClipboardPayload::Image { .. });
 
         for (idx, chunk) in chunks.iter().enumerate() {
@@ -296,10 +305,19 @@ impl BleServer {
             writer.WriteBytes(chunk)?;
             let buffer = writer.DetachBuffer()?;
 
-            self.notify_char
+            let results = self.notify_char
                 .NotifyValueAsync(&buffer)?
                 .get()
                 .context("BLE Notify 投递失败")?;
+            if results.Size()? == 0 {
+                anyhow::bail!("BLE 分片 {} 无接收客户端", idx + 1);
+            }
+            for result_index in 0..results.Size()? {
+                let status = results.GetAt(result_index)?.Status()?;
+                if status != GattCommunicationStatus::Success {
+                    anyhow::bail!("BLE 分片 {} 投递失败: {:?}", idx + 1, status);
+                }
+            }
 
             if total_chunks > 10 && (idx % 10 == 0 || idx == total_chunks - 1) {
                 let percent = ((idx + 1) * 100 / total_chunks) as u32;

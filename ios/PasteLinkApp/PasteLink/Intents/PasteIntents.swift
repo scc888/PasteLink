@@ -28,7 +28,7 @@ enum PasteIntentError: Error, CustomLocalizedStringResourceConvertible {
 /// 核心规范 (单一职责):
 /// - 从 `group.com.pastelink.shared` 读取 `lastReceivedType` 与对应的文本或图片
 /// - 通过 `ReturnsValue<IntentFile>` 返回文件/媒体给快捷指令后续动作 (由 Apple 原生“复制到剪贴板”动作真正写入系统)
-/// - 同步在 MainActor 直接写入系统剪贴板双保险
+/// - 只返回内容，由快捷指令的“复制到剪贴板”动作执行写入
 /// - 不要求打开 PasteLink 主 App (openAppWhenRun = false)
 ///
 /// @author PasteLink
@@ -52,14 +52,8 @@ struct GetWindowsClipboardIntent: AppIntent {
                 throw PasteIntentError.emptyClipboard
             }
             let imgURL = containerURL.appendingPathComponent("last_received_image.png")
-            guard let imgData = try? Data(contentsOf: imgURL), let image = UIImage(data: imgData) else {
+            guard let imgData = try? Data(contentsOf: imgURL), UIImage(data: imgData) != nil else {
                 throw PasteIntentError.emptyClipboard
-            }
-
-            await MainActor.run {
-                UIPasteboard.general.image = image
-                UIPasteboard.general.setData(imgData, forPasteboardType: "public.png")
-                AudioServicesPlaySystemSound(1519)
             }
 
             let file = IntentFile(data: imgData, filename: "clipboard.png", type: .png)
@@ -67,12 +61,6 @@ struct GetWindowsClipboardIntent: AppIntent {
         } else {
             guard let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty else {
                 throw PasteIntentError.emptyClipboard
-            }
-
-            await MainActor.run {
-                UIPasteboard.general.string = text
-                UIPasteboard.general.setValue(text, forPasteboardType: "public.utf8-plain-text")
-                AudioServicesPlaySystemSound(1519)
             }
 
             let textData = text.data(using: .utf8) ?? Data()

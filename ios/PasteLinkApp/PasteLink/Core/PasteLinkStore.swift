@@ -165,6 +165,11 @@ final class PasteLinkStore: ObservableObject {
     @Published var maxHistoryCount: Int = 10
     @Published var appTheme: AppTheme = .system
 
+    /// 历史记录兼容别名 (防错保护，对齐 clipboardHistory 引用)
+    var clipboardHistory: [ClipboardItem] {
+        return history
+    }
+
     private init() {
         let storedLimit = defaults.integer(forKey: "maxHistoryCount")
         self.maxHistoryCount = storedLimit > 0 ? storedLimit : 10
@@ -193,8 +198,7 @@ final class PasteLinkStore: ObservableObject {
             saveHistoryToDisk(migratedItems)
         }
 
-        let pin = getPairingPIN()
-        self.pairedPIN = pin.isEmpty ? getLastEnteredPIN() : pin
+        self.pairedPIN = getPairingPIN()
 
         let rawTheme = defaults.string(forKey: "appTheme") ?? UserDefaults.standard.string(forKey: "appTheme")
         if let rawTheme = rawTheme, let theme = AppTheme(rawValue: rawTheme) {
@@ -230,14 +234,18 @@ final class PasteLinkStore: ObservableObject {
 
     private func trimHistoryToLimit() {
         var items = getHistory()
-        while items.count > maxHistoryCount {
-            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                items.remove(at: lastUnpinnedIndex)
-            } else {
-                break
-            }
-        }
+        enforceHistoryLimit(&items)
         saveHistoryToDisk(items)
+    }
+
+    /// 收藏不占普通记录配额；所有入口统一淘汰规则并清理被淘汰的图片原文件。
+    private func enforceHistoryLimit(_ items: inout [ClipboardItem]) {
+        var overflow = items.filter { !$0.isPinned }.count - maxHistoryCount
+        while overflow > 0, let index = items.lastIndex(where: { !$0.isPinned }) {
+            let removed = items.remove(at: index)
+            cleanOrphanImageFile(for: removed, remainingItems: items)
+            overflow -= 1
+        }
     }
 
     // MARK: - 防回环去重 (SHA-256 Fingerprint Pool)
@@ -259,13 +267,14 @@ final class PasteLinkStore: ObservableObject {
     // MARK: - 配对 PIN 码管理与最近一次记忆
 
     func getPairingPIN() -> String {
-        if let pin = defaults.string(forKey: "pairedPIN"), !pin.isEmpty {
+        // An explicitly empty value means the user removed trust. Never restore a draft PIN.
+        if let pin = defaults.string(forKey: "pairedPIN") {
             return pin
         }
-        if let pin = UserDefaults.standard.string(forKey: "pairedPIN"), !pin.isEmpty {
+        if let pin = UserDefaults.standard.string(forKey: "pairedPIN") {
             return pin
         }
-        return getLastEnteredPIN()
+        return ""
     }
 
     func getLastEnteredPIN() -> String {
@@ -280,16 +289,20 @@ final class PasteLinkStore: ObservableObject {
 
     func savePairingPIN(_ pin: String) {
         let clean = pin.replacingOccurrences(of: " ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.isEmpty || (clean.count == 6 && clean.allSatisfy({ "0123456789".contains($0) })) else { return }
         // 1. 同步保存到 App Group 与 Standard 双通道，确保免证书沙盒环境下也能持久化
         defaults.set(clean, forKey: "pairedPIN")
         defaults.synchronize()
         UserDefaults.standard.set(clean, forKey: "pairedPIN")
         UserDefaults.standard.synchronize()
 
-        // 2. 只要输入过 6 位有效数字，即记录为最近一次输入，防止任何意外清空导致下次重新输入
+        // Only verified PINs reach this method; removing trust clears remembered credentials too.
         if clean.count == 6 {
             defaults.set(clean, forKey: "lastEnteredPIN")
             UserDefaults.standard.set(clean, forKey: "lastEnteredPIN")
+        } else {
+            defaults.removeObject(forKey: "lastEnteredPIN")
+            UserDefaults.standard.removeObject(forKey: "lastEnteredPIN")
         }
 
         DispatchQueue.main.async {
@@ -323,14 +336,7 @@ final class PasteLinkStore: ObservableObject {
         items.removeAll { $0.sha256 == item.sha256 }
         items.insert(newItem, at: 0)
 
-        // 限制非置顶条目上限
-        while items.count > maxHistoryCount {
-            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                items.remove(at: lastUnpinnedIndex)
-            } else {
-                break
-            }
-        }
+        enforceHistoryLimit(&items)
 
         saveHistoryToDisk(items)
         return newItem
@@ -349,13 +355,7 @@ final class PasteLinkStore: ObservableObject {
         items.removeAll { $0.sha256 == item.sha256 }
         items.insert(newItem, at: 0)
 
-        while items.count > maxHistoryCount {
-            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                items.remove(at: lastUnpinnedIndex)
-            } else {
-                break
-            }
-        }
+        enforceHistoryLimit(&items)
 
         saveHistoryToDisk(items)
         return newItem
@@ -395,14 +395,7 @@ final class PasteLinkStore: ObservableObject {
         items.removeAll { $0.sha256 == item.sha256 }
         items.insert(newItem, at: 0)
 
-        while items.count > maxHistoryCount {
-            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                let removed = items.remove(at: lastUnpinnedIndex)
-                cleanOrphanImageFile(for: removed, remainingItems: items)
-            } else {
-                break
-            }
-        }
+        enforceHistoryLimit(&items)
 
         saveHistoryToDisk(items)
         return newItem
@@ -430,14 +423,7 @@ final class PasteLinkStore: ObservableObject {
         items.removeAll { $0.sha256 == item.sha256 }
         items.insert(newItem, at: 0)
 
-        while items.count > maxHistoryCount {
-            if let lastUnpinnedIndex = items.lastIndex(where: { !$0.isPinned }) {
-                let removed = items.remove(at: lastUnpinnedIndex)
-                cleanOrphanImageFile(for: removed, remainingItems: items)
-            } else {
-                break
-            }
-        }
+        enforceHistoryLimit(&items)
 
         saveHistoryToDisk(items)
         return newItem
@@ -457,6 +443,7 @@ final class PasteLinkStore: ObservableObject {
         var items = getHistory()
         if let index = items.firstIndex(where: { $0.id == id }) {
             items[index].isPinned.toggle()
+            enforceHistoryLimit(&items)
             saveHistoryToDisk(items)
         }
     }

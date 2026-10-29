@@ -4,9 +4,14 @@ import SwiftUI
 struct HardwareIntegrationView: View {
     @ObservedObject private var liveActivityManager = LiveActivityManager.shared
 
-    /// 预置的 iCloud 快捷指令链接 (根据分享的专属 ID)
-    private static let defaultCopyShortcutURL = "https://www.icloud.com/shortcuts/d5f9ee8833d1438da18fab68ee3369be"
-    private static let defaultPushShortcutURL = "https://www.icloud.com/shortcuts/6a153344cff7464f9e7bf0df3c84ca9e"
+    /// 分享链接需要与当前正式版的应用标识匹配。
+    private static let defaultCopyShortcutURL = ""
+    private static let defaultPushShortcutURL = ""
+    /// 已保存的旧链接仍可能存在于用户设置中，保留标识用于阻止误打开。
+    private static let retiredShortcutIDs: Set<String> = [
+        "d5f9ee8833d1438da18fab68ee3369be", "2ae405888020449e9547bea26588a270",
+        "6a153344cff7464f9e7bf0df3c84ca9e", "d23d135aac6146b1b848201c79e518e9"
+    ]
 
     @AppStorage("copyShortcutURL") private var copyShortcutURL: String = defaultCopyShortcutURL
     @AppStorage("pushShortcutURL") private var pushShortcutURL: String = defaultPushShortcutURL
@@ -136,7 +141,7 @@ struct HardwareIntegrationView: View {
     private var controlCenterSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                Text("从屏幕右上角下拉「控制中心」→ 点击左上角 [+] → 搜索「PasteLink」即可添加「一键复制」与「一键推送」专属圆形快捷按钮。")
+                Text("先在下方创建“PasteLink 一键复制”快捷指令，再打开控制中心 → [+] → 添加控件 → 快捷指令 → 选择该快捷指令。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineSpacing(3)
@@ -172,7 +177,7 @@ struct HardwareIntegrationView: View {
                     Button {
                         installShortcut(urlStr: copyShortcutURL)
                     } label: {
-                        Label("一键直达添加", systemImage: "arrow.down.circle.fill")
+                        Label(shortcutURL(copyShortcutURL) == nil ? "创建快捷指令" : "打开分享链接", systemImage: "arrow.down.circle.fill")
                             .font(.subheadline.bold())
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
@@ -219,7 +224,7 @@ struct HardwareIntegrationView: View {
                     Button {
                         installShortcut(urlStr: pushShortcutURL)
                     } label: {
-                        Label("一键直达添加", systemImage: "arrow.down.circle.fill")
+                        Label(shortcutURL(pushShortcutURL) == nil ? "创建快捷指令" : "打开分享链接", systemImage: "arrow.down.circle.fill")
                             .font(.subheadline.bold())
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
@@ -270,7 +275,7 @@ struct HardwareIntegrationView: View {
                             .disableAutocorrection(true)
                     }
 
-                    Button("恢复为默认官方分享链接") {
+                    Button("重置分享链接") {
                         copyShortcutURL = Self.defaultCopyShortcutURL
                         pushShortcutURL = Self.defaultPushShortcutURL
                     }
@@ -317,11 +322,11 @@ struct HardwareIntegrationView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 Button {
-                    if let url = URL(string: "shortcuts://") {
+                    if let url = URL(string: "shortcuts://create-shortcut") {
                         UIApplication.shared.open(url)
                     }
                 } label: {
-                    Label("打开 Apple「快捷指令」App 手动编排", systemImage: "arrow.up.forward.app")
+                    Label("进入 Apple「快捷指令」新建画布", systemImage: "plus.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -330,10 +335,14 @@ struct HardwareIntegrationView: View {
             }
             .padding(.top, 4)
         } header: {
-            Text("Apple 快捷指令一键直达安装")
+            Text("Apple 快捷指令")
         } footer: {
-            Text("点击「一键直达添加」将直接弹出系统原生快捷指令安装面板。安装完成后，可放置于桌面「快捷指令小组件」、绑定「轻点背面」或「Action Button」。")
-                .font(.caption2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("复制：新建快捷指令，依次添加 PasteLink 的“获取 Windows 最新剪贴板”和系统的“复制到剪贴板”，将前一步的结果传给后一步。")
+                Text("推送：依次添加系统“获取剪贴板”和 PasteLink 的“发送到 Windows 剪贴板”。请分别命名为“PasteLink 一键复制”和“PasteLink 一键推送”。")
+                Text("已配置分享链接时，可打开链接并在系统页面确认添加。旧版链接不适用于正式版。")
+            }
+            .font(.caption2)
         }
     }
 
@@ -365,10 +374,22 @@ struct HardwareIntegrationView: View {
     }
 
     private func installShortcut(urlStr: String) {
-        let trimmed = urlStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, let url = URL(string: trimmed) {
-            UIApplication.shared.open(url)
-        }
+        guard let url = shortcutURL(urlStr) ?? URL(string: "shortcuts://create-shortcut") else { return }
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+        UIApplication.shared.open(url)
+    }
+
+    private func shortcutURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.scheme?.lowercased() == "https",
+              ["icloud.com", "www.icloud.com"].contains(url.host?.lowercased() ?? ""),
+              url.pathComponents.count == 3,
+              url.pathComponents[1] == "shortcuts",
+              !Self.retiredShortcutIDs.contains(url.lastPathComponent.lowercased()) else { return nil }
+        return url
     }
 
     private func runShortcut(name: String) {

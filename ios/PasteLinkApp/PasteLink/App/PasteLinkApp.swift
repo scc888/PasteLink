@@ -1,4 +1,5 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 
 /// PasteLink iOS 生产级应用程序入口
@@ -11,6 +12,12 @@ struct PasteLinkApp: App {
     @ObservedObject private var store = PasteLinkStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        if #available(iOS 16.0, *) {
+            PasteLinkShortcuts.updateAppShortcutParameters()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             MainTabView()
@@ -20,6 +27,9 @@ struct PasteLinkApp: App {
                     if newPhase == .active {
                         // 保证前台激活时灵动岛状态与连接状态对齐：已连接常驻，未连接自动退出
                         LiveActivityManager.shared.ensureActivityStarted()
+                        bluetoothManager.resumeConnectionIfNeeded()
+                    } else if newPhase == .background {
+                        bluetoothManager.prepareBackgroundScanIfNeeded()
                     }
                 }
                 .onOpenURL { url in

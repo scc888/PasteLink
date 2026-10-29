@@ -19,6 +19,11 @@ fn get_status(state: State<'_, AppState>) -> StatusPayload {
 }
 
 #[tauri::command]
+fn get_lan_status(state: State<'_, AppState>) -> bool {
+    state.is_lan_connected()
+}
+
+#[tauri::command]
 fn toggle_pause(state: State<'_, AppState>, app: AppHandle, paused: bool) -> bool {
     state.set_paused(paused);
     let _ = app.emit("pause-state-changed", paused);
@@ -99,6 +104,7 @@ fn toggle_pin_history_item(state: State<'_, AppState>, app: AppHandle, id: Strin
 fn refresh_pairing_pin(state: State<'_, AppState>) -> String {
     let new_pin = AppState::generate_pin();
     *state.pairing_code.lock().unwrap() = new_pin.clone();
+    state.clear_lan_seen();
     state.persist_current_settings();
     new_pin
 }
@@ -128,10 +134,14 @@ fn hide_window(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Ok(file) = std::fs::File::create("D:\\PasteLink\\pastelink.log") {
-        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-            .target(env_logger::Target::Pipe(Box::new(file)))
-            .try_init();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let log_dir = std::path::PathBuf::from(appdata).join("PasteLink");
+        let _ = std::fs::create_dir_all(&log_dir);
+        if let Ok(file) = std::fs::File::create(log_dir.join("pastelink.log")) {
+            let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                .target(env_logger::Target::Pipe(Box::new(file)))
+                .try_init();
+        }
     }
 
     // 1. 创建跨模块 Channel
@@ -149,6 +159,7 @@ pub fn run() {
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             get_status,
+            get_lan_status,
             toggle_pause,
             toggle_ignore_password_manager,
             toggle_autostart,
@@ -279,11 +290,19 @@ pub fn run() {
                     let _ = tray;
                 }
 
-                // 8. 应用启动时主动定位并呈递窗口，让用户立刻看到界面
-                if let Some(window) = app.get_webview_window("main") {
-                    WindowEffectManager::position_tray_window(&window);
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                // 8. 自动校准开机启动路径（若已开启且路径变动）
+                crate::core::autostart::AutoStartManager::sync_current_exe_if_enabled();
+
+                // 9. 窗口呈递逻辑 (开机自启 --minimized 时保持托盘静默，常规手动启动时展示窗口)
+                let is_minimized = std::env::args().any(|arg| arg == "--minimized");
+                if !is_minimized {
+                    if let Some(window) = app.get_webview_window("main") {
+                        WindowEffectManager::position_tray_window(&window);
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                } else {
+                    log::info!("[Startup] 检测到 --minimized 参数，保持静默托盘运行");
                 }
 
                 Ok(())
@@ -293,7 +312,7 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+        if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
             api.prevent_exit();
         }
     });

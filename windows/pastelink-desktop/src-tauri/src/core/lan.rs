@@ -8,19 +8,103 @@ use crate::core::crypto::CryptoEngine;
 
 pub struct LanServer;
 
+const LAN_HEARTBEAT_MESSAGE: &[u8] = b"PLK_LAN_HEARTBEAT_V1";
+
+fn is_paired_heartbeat(value: &str, pin: &str) -> bool {
+    use base64::Engine;
+    let Ok(packet) = base64::engine::general_purpose::STANDARD.decode(value) else {
+        return false;
+    };
+    // decrypt_raw also supports legacy plaintext; never accept it for a heartbeat.
+    if !packet.starts_with(b"PLK1") {
+        return false;
+    }
+    let key = CryptoEngine::derive_key(pin);
+    matches!(CryptoEngine::decrypt_raw(&packet, &key), Ok(message) if message == LAN_HEARTBEAT_MESSAGE)
+}
+
 impl LanServer {
-    /// 获取本机首选局域网 IPv4 地址 (支持外网直连推导与离线局域网网络适配器解析)
+    /// 校验是否为合法的局域网物理网卡 IPv4 地址 (显式剔除回环、链路本地、TUN/VPN 虚拟网段等)
+    pub fn is_valid_lan_ipv4(ip: std::net::Ipv4Addr) -> bool {
+        if ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() {
+            return false;
+        }
+        let octets = ip.octets();
+        // 1. 过滤 0.0.0.0/8
+        if octets[0] == 0 {
+            return false;
+        }
+        // 2. 过滤 Clash/Mihomo/Surge/Sing-box TUN fake-ip 虚拟保留网段: 198.18.0.0/15 (198.18.0.0 - 198.19.255.255)
+        if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+            return false;
+        }
+        // 3. 过滤 Tailscale / CGNAT 虚拟网段: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
+        if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+            return false;
+        }
+        true
+    }
+
+    /// 对合法的局域网 IP 进行优先级评分 (物理 Wi-Fi / 家庭 / 办公局域网权重最高)
+    fn score_lan_ipv4(ip: std::net::Ipv4Addr) -> u32 {
+        let octets = ip.octets();
+        // 1. 最常见家庭与主流路由器私网 (192.168.x.x)
+        if octets[0] == 192 && octets[1] == 168 {
+            return 100;
+        }
+        // 2. 企业与常用大内网 (10.x.x.x)
+        if octets[0] == 10 {
+            return 90;
+        }
+        // 3. RFC 1918 B类私网 (172.16.x.x ~ 172.31.x.x)
+        if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+            return 85;
+        }
+        // 4. 企业专网/办公网常用其它 172.x.x.x 网段 (如 172.10.x.x)
+        if octets[0] == 172 {
+            return 80;
+        }
+        // 5. 其他合规内网
+        50
+    }
+
+    /// 获取本机首选局域网 IPv4 地址 (支持过滤 TUN/VPN 虚拟网卡与多网卡智能优选)
     pub fn get_local_ip() -> Option<String> {
-        // 1. 优先通过 UDP 路由快速探测 (覆盖常见国内国外公共 DNS)
-        let probe_addrs = ["8.8.8.8:80", "114.114.114.114:80", "1.1.1.1:80"];
+        let mut candidates: Vec<std::net::Ipv4Addr> = Vec::new();
+
+        // 1. 优先从主机名解析本机所有已绑定的 IPv4 地址 (最直接、不受 TUN 路由表篡改干扰)
+        use std::net::ToSocketAddrs;
+        if let Ok(hostname) = std::env::var("COMPUTERNAME") {
+            if let Ok(addrs) = format!("{}:0", hostname).to_socket_addrs() {
+                for addr in addrs {
+                    if let std::net::SocketAddr::V4(v4) = addr {
+                        let ip = *v4.ip();
+                        if Self::is_valid_lan_ipv4(ip) && !candidates.contains(&ip) {
+                            candidates.push(ip);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 通过 UDP 路由探测常见网关与局域网节点 (若外网 DNS 被 TUN 劫持，将自动被 is_valid_lan_ipv4 过滤)
+        let probe_addrs = [
+            "192.168.1.1:80",
+            "192.168.0.1:80",
+            "192.168.31.1:80",
+            "10.0.0.1:80",
+            "172.16.0.1:80",
+            "114.114.114.114:80",
+            "8.8.8.8:80",
+            "1.1.1.1:80",
+        ];
         for target in probe_addrs {
             if let Ok(s) = std::net::UdpSocket::bind("0.0.0.0:0") {
                 if s.connect(target).is_ok() {
                     if let Ok(local_addr) = s.local_addr() {
-                        let ip = local_addr.ip();
-                        if let std::net::IpAddr::V4(v4) = ip {
-                            if !v4.is_loopback() && !v4.is_link_local() {
-                                return Some(v4.to_string());
+                        if let std::net::IpAddr::V4(v4) = local_addr.ip() {
+                            if Self::is_valid_lan_ipv4(v4) && !candidates.contains(&v4) {
+                                candidates.push(v4);
                             }
                         }
                     }
@@ -28,23 +112,12 @@ impl LanServer {
             }
         }
 
-        // 2. 离线/纯内网兜底：通过计算机名解析已绑定的私有局域网网卡 IP
-        use std::net::ToSocketAddrs;
-        if let Ok(hostname) = std::env::var("COMPUTERNAME") {
-            if let Ok(addrs) = format!("{}:0", hostname).to_socket_addrs() {
-                for addr in addrs {
-                    if let std::net::SocketAddr::V4(v4) = addr {
-                        let ip = v4.ip();
-                        let octets = ip.octets();
-                        let is_private = (octets[0] == 10)
-                            || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                            || (octets[0] == 192 && octets[1] == 168);
-                        if is_private && !ip.is_loopback() && !ip.is_link_local() {
-                            return Some(ip.to_string());
-                        }
-                    }
-                }
-            }
+        // 3. 根据内网可达性评分排序，优选物理局域网网卡 IP
+        if !candidates.is_empty() {
+            candidates.sort_by(|a, b| Self::score_lan_ipv4(*b).cmp(&Self::score_lan_ipv4(*a)));
+            let best_ip = candidates[0].to_string();
+            log::info!("[LAN 🌐] 自动锁定最优物理局域网 IP: {} (候选列表: {:?})", best_ip, candidates);
+            return Some(best_ip);
         }
 
         None
@@ -191,24 +264,34 @@ impl LanServer {
 
         // 解析 Content-Length
         let mut content_length: usize = 0;
+        let mut heartbeat = None;
         for line in lines {
-            if line.to_lowercase().starts_with("content-length:") {
-                if let Some(val) = line.split(':').nth(1) {
+            if let Some((name, val)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
                     content_length = val.trim().parse::<usize>().unwrap_or(0);
+                } else if name.eq_ignore_ascii_case("x-pastelink-heartbeat") {
+                    heartbeat = Some(val.trim());
                 }
             }
         }
 
         // 1. 探活握手接口: GET /api/ping
         if method == "GET" && path == "/api/ping" {
+            let paired = heartbeat.map(|value| {
+                let pin = state.pairing_code.lock().unwrap().clone();
+                is_paired_heartbeat(value, &pin)
+            }).unwrap_or(false);
             let local_ip = Self::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-            let body = format!("{{\"status\":\"ok\",\"device_name\":\"Windows 电脑\",\"ip\":\"{}\"}}", local_ip);
+            let body = format!("{{\"status\":\"ok\",\"device_name\":\"Windows 电脑\",\"ip\":\"{}\",\"paired\":{}}}", local_ip, paired);
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{}",
                 body.len(),
                 body
             );
             stream.write_all(resp.as_bytes()).await?;
+            if paired {
+                state.mark_lan_seen();
+            }
             return Ok(());
         }
 
@@ -299,10 +382,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn heartbeat_requires_matching_encrypted_pairing_proof() {
+        use base64::Engine;
+        let key = CryptoEngine::derive_key("123456");
+        let encrypted = CryptoEngine::encrypt_raw(LAN_HEARTBEAT_MESSAGE, &key).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(encrypted);
+        assert!(is_paired_heartbeat(&encoded, "123456"));
+        assert!(!is_paired_heartbeat(&encoded, "654321"));
+        assert!(!is_paired_heartbeat(&base64::engine::general_purpose::STANDARD.encode(LAN_HEARTBEAT_MESSAGE), "123456"));
+        assert!(!is_paired_heartbeat("not-base64", "123456"));
+    }
+
+    #[test]
+    fn test_is_valid_lan_ipv4() {
+        use std::net::Ipv4Addr;
+        // 正常局域网
+        assert!(LanServer::is_valid_lan_ipv4(Ipv4Addr::new(192, 168, 1, 100)));
+        assert!(LanServer::is_valid_lan_ipv4(Ipv4Addr::new(10, 0, 0, 5)));
+        assert!(LanServer::is_valid_lan_ipv4(Ipv4Addr::new(172, 10, 0, 188)));
+        assert!(LanServer::is_valid_lan_ipv4(Ipv4Addr::new(172, 20, 1, 50)));
+
+        // 必须被过滤的虚拟/保留地址
+        assert!(!LanServer::is_valid_lan_ipv4(Ipv4Addr::new(127, 0, 0, 1))); // 回环
+        assert!(!LanServer::is_valid_lan_ipv4(Ipv4Addr::new(169, 254, 1, 1))); // Link-local
+        assert!(!LanServer::is_valid_lan_ipv4(Ipv4Addr::new(198, 18, 0, 1))); // Clash/Mihomo TUN fake-ip
+        assert!(!LanServer::is_valid_lan_ipv4(Ipv4Addr::new(198, 19, 255, 1))); // 198.18.0.0/15
+        assert!(!LanServer::is_valid_lan_ipv4(Ipv4Addr::new(100, 64, 0, 1))); // Tailscale / CGNAT
+        assert!(!LanServer::is_valid_lan_ipv4(Ipv4Addr::new(0, 0, 0, 0))); // 未指定
+    }
+
+    #[test]
     fn test_lan_get_local_ip() {
         if let Some(ip) = LanServer::get_local_ip() {
+            println!("DETECTED IP: {}", ip);
             assert!(!ip.is_empty());
             assert!(ip.contains('.'));
+            // 确保不会选出 TUN 虚拟网卡 IP
+            assert!(!ip.starts_with("198.18."));
+            assert!(!ip.starts_with("198.19."));
+            assert!(!ip.starts_with("127."));
+            assert!(!ip.starts_with("169.254."));
         }
     }
 

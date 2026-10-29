@@ -29,6 +29,7 @@ export interface StatusPayload {
   ignore_password_manager: boolean;
   autostart_enabled: boolean;
   connected_devices: number;
+  lan_connected: boolean;
   pairing_code: string;
   recent_items: ClipboardItem[];
 }
