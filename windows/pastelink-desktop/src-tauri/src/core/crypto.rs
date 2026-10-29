@@ -22,9 +22,14 @@ impl CryptoEngine {
     }
 
     /// 使用 AES-256-GCM 加密文本
+    pub fn encrypt(text: &str, key: &[u8; 32]) -> Result<Vec<u8>, String> {
+        Self::encrypt_raw(text.as_bytes(), key)
+    }
+
+    /// 使用 AES-256-GCM 加密任意原始二进制数据
     ///
     /// 封装结构: `[PLK1 (4B)] + [Nonce (12B)] + [密文 + Tag (NB)]`
-    pub fn encrypt(text: &str, key: &[u8; 32]) -> Result<Vec<u8>, String> {
+    pub fn encrypt_raw(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
         use aes_gcm::aead::rand_core::RngCore;
         let mut nonce_bytes = [0u8; 12];
@@ -32,7 +37,7 @@ impl CryptoEngine {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt(nonce, text.as_bytes())
+            .encrypt(nonce, data)
             .map_err(|e| format!("AES-256-GCM 加密失败: {}", e))?;
 
         let mut packet = Vec::with_capacity(4 + 12 + ciphertext.len());
@@ -43,8 +48,8 @@ impl CryptoEngine {
         Ok(packet)
     }
 
-    /// 解密数据 (若为明文则平滑降级解码)
-    pub fn decrypt(data: &[u8], key: &[u8; 32]) -> Result<String, String> {
+    /// 解密原始二进制数据 (若为明文则平滑降级)
+    pub fn decrypt_raw(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
         // 1. 检查是否携带 PLK1 加密封包头
         if data.len() >= 16 + 4 && &data[0..4] == MAGIC_HEADER {
             let nonce_bytes = &data[4..16];
@@ -57,11 +62,17 @@ impl CryptoEngine {
                 .decrypt(nonce, ciphertext)
                 .map_err(|e| format!("AES-256-GCM 解密失败 (可能配对码不匹配): {}", e))?;
 
-            String::from_utf8(plaintext).map_err(|e| format!("UTF-8 解码失败: {}", e))
+            Ok(plaintext)
         } else {
             // 2. 兼容明文降级
-            String::from_utf8(data.to_vec()).map_err(|e| format!("UTF-8 明文解析失败: {}", e))
+            Ok(data.to_vec())
         }
+    }
+
+    /// 解密数据并解析为 UTF-8 文本
+    pub fn decrypt(data: &[u8], key: &[u8; 32]) -> Result<String, String> {
+        let raw = Self::decrypt_raw(data, key)?;
+        String::from_utf8(raw).map_err(|e| format!("UTF-8 解码失败: {}", e))
     }
 }
 
@@ -95,5 +106,17 @@ mod tests {
         let plain_bytes = b"Hello Plaintext";
         let decrypted = CryptoEngine::decrypt(plain_bytes, &key).expect("明文降级失败");
         assert_eq!(decrypted, "Hello Plaintext");
+    }
+
+    #[test]
+    fn test_crypto_raw_binary_roundtrip() {
+        let key = CryptoEngine::derive_key("123456");
+        // 非法 UTF-8 二进制数据（如图片字节）
+        let raw_binary = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x00, 0xC0];
+        let encrypted = CryptoEngine::encrypt_raw(&raw_binary, &key).expect("二进制加密失败");
+        assert_eq!(&encrypted[0..4], b"PLK1");
+
+        let decrypted = CryptoEngine::decrypt_raw(&encrypted, &key).expect("二进制解密失败");
+        assert_eq!(decrypted, raw_binary);
     }
 }

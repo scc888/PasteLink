@@ -4,10 +4,16 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var bluetooth: BluetoothManager
     @ObservedObject var store = PasteLinkStore.shared
+    @ObservedObject var lan = LANManager.shared
 
     @State private var isPairingSheetPresented: Bool = false
     @State private var isLogExpanded: Bool = false
     @State private var showResetAlert: Bool = false
+    @State private var showClearHistoryConfirm: Bool = false
+
+    private var unpinnedHistoryCount: Int {
+        store.history.filter { !$0.isPinned }.count
+    }
 
     var body: some View {
         NavigationStack {
@@ -15,10 +21,13 @@ struct SettingsView: View {
                 // 1. 已信任电脑设备
                 pairedDevicesSection
 
-                // 2. 端到端加密设置
+                // 2. 外观与显示模式 (深色模式)
+                appearanceSection
+
+                // 3. 端到端加密设置
                 securitySection
 
-                // 3. 剪贴板历史记录设置
+                // 4. 剪贴板历史记录设置
                 historySection
 
                 // 4. 隐私与数据安全
@@ -40,6 +49,14 @@ struct SettingsView: View {
                     bluetooth.connectedDeviceName = nil
                     bluetooth.isAuthFailed = false
                     store.savePairingPIN("")
+                    LANManager.shared.isLanAvailable = false
+                }
+                Button("取消", role: .cancel) {}
+            }
+            .confirmationDialog("清空未收藏的历史记录？收藏将保留，此操作无法撤销。",
+                                isPresented: $showClearHistoryConfirm, titleVisibility: .visible) {
+                Button("清空 \(unpinnedHistoryCount) 条记录", role: .destructive) {
+                    store.clearHistory()
                 }
                 Button("取消", role: .cancel) {}
             }
@@ -50,7 +67,7 @@ struct SettingsView: View {
 
     private var pairedDevicesSection: some View {
         Section("已配对的 Windows 电脑") {
-            if store.pairedPIN.isEmpty && bluetooth.connectionState != .connected {
+            if store.pairedPIN.isEmpty {
                 HStack {
                     Image(systemName: "desktopcomputer")
                         .font(.title2)
@@ -59,7 +76,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("暂无信任设备")
                             .font(.subheadline.bold())
-                        Text("请在主页点击「配对码」绑定电脑")
+                        Text(bluetooth.connectionState == .connected ? "蓝牙已连接，请输入电脑配对码建立信任" : "请在主页点击「配对码」绑定电脑")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -77,12 +94,12 @@ struct SettingsView: View {
                 HStack {
                     Image(systemName: "desktopcomputer")
                         .font(.title2)
-                        .foregroundStyle(bluetooth.connectionState == .connected ? .blue : .secondary)
+                        .foregroundStyle(lan.isLanAvailable || bluetooth.connectionState == .connected ? .blue : .secondary)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(bluetooth.connectedDeviceName ?? "Windows PC")
                             .font(.headline)
-                        Text(bluetooth.connectionState == .connected ? (bluetooth.isAuthFailed ? "🔴 配对码错误" : "🟢 已加密连接") : "⚪ 离线 · 等待重连")
+                        Text(lan.isLanAvailable ? "🟢 WLAN 已连接" : (bluetooth.connectionState == .connected ? (bluetooth.isAuthFailed ? "🔴 配对验证失败" : "🟢 蓝牙已连接") : "⚪ 离线 · 等待重连"))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -100,7 +117,39 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 2. 安全加密
+    // MARK: - 2. 外观与显示模式 (深色模式)
+
+    private var appearanceSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("深色模式", systemImage: store.appTheme.iconName)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(store.appTheme.title)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Picker("外观模式", selection: Binding(
+                    get: { store.appTheme },
+                    set: { store.setAppTheme($0) }
+                )) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Label(theme.title, systemImage: theme.iconName).tag(theme)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("外观与显示")
+        } footer: {
+            Text("选择「跟随系统」将随 iOS 系统自动切换；选择「浅色模式」或「深色模式」将在应用内锁定对应外观。")
+        }
+    }
+
+    // MARK: - 3. 安全加密
 
     private var securitySection: some View {
         Section("安全与配对") {
@@ -152,17 +201,18 @@ struct SettingsView: View {
             }
 
             Button(role: .destructive) {
-                store.clearHistory()
+                showClearHistoryConfirm = true
             } label: {
                 HStack {
-                    Label("清空所有历史记录", systemImage: "trash")
+                    Label("清空历史（保留收藏）", systemImage: "trash")
                         .foregroundStyle(.red)
                     Spacer()
-                    Text("\(store.history.count) 条")
+                    Text("\(unpinnedHistoryCount) 条")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+            .disabled(unpinnedHistoryCount == 0)
         } header: {
             Text("剪贴板历史")
         } footer: {
@@ -178,7 +228,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("零云端存储承诺")
                         .font(.subheadline)
-                    Text("所有数据仅在本地蓝牙硬件直连链路传输，无任何中心化服务器")
+                    Text("内容经蓝牙或局域网在设备间传输，不上传云端服务器")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -244,7 +294,7 @@ struct SettingsView: View {
             HStack {
                 Text("通信协议")
                 Spacer()
-                Text("BLE GATT 64KB UTF-8")
+                Text("BLE / WLAN · 文本与 PNG")
                     .foregroundStyle(.secondary)
             }
         } header: {

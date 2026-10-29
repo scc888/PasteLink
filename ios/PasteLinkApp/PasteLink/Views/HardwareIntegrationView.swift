@@ -4,6 +4,19 @@ import SwiftUI
 struct HardwareIntegrationView: View {
     @ObservedObject private var liveActivityManager = LiveActivityManager.shared
 
+    /// 分享链接需要与当前正式版的应用标识匹配。
+    private static let defaultCopyShortcutURL = ""
+    private static let defaultPushShortcutURL = ""
+    /// 已保存的旧链接仍可能存在于用户设置中，保留标识用于阻止误打开。
+    private static let retiredShortcutIDs: Set<String> = [
+        "d5f9ee8833d1438da18fab68ee3369be", "2ae405888020449e9547bea26588a270",
+        "6a153344cff7464f9e7bf0df3c84ca9e", "d23d135aac6146b1b848201c79e518e9"
+    ]
+
+    @AppStorage("copyShortcutURL") private var copyShortcutURL: String = defaultCopyShortcutURL
+    @AppStorage("pushShortcutURL") private var pushShortcutURL: String = defaultPushShortcutURL
+    @State private var isCustomLinksExpanded: Bool = false
+
     var body: some View {
         NavigationStack {
             List {
@@ -85,7 +98,7 @@ struct HardwareIntegrationView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("灵动岛 & 锁屏实时活动")
                             .font(.subheadline)
-                        Text("Windows 复制时自动在灵动岛展示预览，点击一键粘贴")
+                        Text("仅在与电脑建立连接时常驻显示，断开连接自动退出")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -112,7 +125,7 @@ struct HardwareIntegrationView: View {
 
             if liveActivityManager.isDynamicIslandEnabled {
                 Button {
-                    liveActivityManager.showLiveActivity(text: "https://pastelink.app · 测试预览", deviceName: "Windows PC")
+                    liveActivityManager.showLiveActivity(text: "https://pastelink.app · 测试预览", deviceName: "Windows PC", force: true)
                 } label: {
                     Label("立即测试弹出灵动岛", systemImage: "sparkles")
                         .font(.subheadline)
@@ -128,7 +141,7 @@ struct HardwareIntegrationView: View {
     private var controlCenterSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                Text("从屏幕右上角下拉「控制中心」→ 点击左上角 [+] → 搜索「PasteLink」即可添加「一键复制」与「一键推送」专属圆形快捷按钮。")
+                Text("先在下方创建“PasteLink 一键复制”快捷指令，再打开控制中心 → [+] → 添加控件 → 快捷指令 → 选择该快捷指令。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineSpacing(3)
@@ -139,67 +152,197 @@ struct HardwareIntegrationView: View {
         }
     }
 
-    // MARK: - 4. 快捷指令与系统自动化
+    // MARK: - 4. 快捷指令一键直达安装与自动化
 
     private var shortcutsInstallSection: some View {
         Section {
+            // 1. 一键复制快捷指令
             VStack(alignment: .leading, spacing: 10) {
-                Text("PasteLink 动作已通过 AppIntents 深度内置于 iOS 系统中，无需下载任何第三方脚本：")
+                HStack {
+                    Image(systemName: "arrow.down.doc.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("PasteLink 一键复制")
+                            .font(.headline)
+                        Text("Windows → iPhone · 从电脑获取最新内容并写入剪贴板")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        installShortcut(urlStr: copyShortcutURL)
+                    } label: {
+                        Label(shortcutURL(copyShortcutURL) == nil ? "创建快捷指令" : "打开分享链接", systemImage: "arrow.down.circle.fill")
+                            .font(.subheadline.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(Color.blue)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        runShortcut(name: "PasteLink 一键复制")
+                    } label: {
+                        Label("测试运行", systemImage: "play.fill")
+                            .font(.subheadline.bold())
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.blue.opacity(0.15))
+                            .foregroundStyle(.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 4)
+
+            // 2. 一键推送快捷指令
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "paperplane.fill")
+                        .font(.title3)
+                        .foregroundStyle(.purple)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("PasteLink 一键推送")
+                            .font(.headline)
+                        Text("iPhone → Windows · 将手机剪贴板秒级推送到电脑")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        installShortcut(urlStr: pushShortcutURL)
+                    } label: {
+                        Label(shortcutURL(pushShortcutURL) == nil ? "创建快捷指令" : "打开分享链接", systemImage: "arrow.down.circle.fill")
+                            .font(.subheadline.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(Color.purple)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        runShortcut(name: "PasteLink 一键推送")
+                    } label: {
+                        Label("测试运行", systemImage: "play.fill")
+                            .font(.subheadline.bold())
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.purple.opacity(0.15))
+                            .foregroundStyle(.purple)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 4)
+
+            // 3. 自定义 / 查看 iCloud 分享链接 (折叠配置)
+            DisclosureGroup(isExpanded: $isCustomLinksExpanded) {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("一键复制 iCloud 链接:")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                        TextField("iCloud 快捷指令链接", text: $copyShortcutURL)
+                            .font(.caption)
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+                            .disableAutocorrection(true)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("一键推送 iCloud 链接:")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                        TextField("iCloud 快捷指令链接", text: $pushShortcutURL)
+                            .font(.caption)
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+                            .disableAutocorrection(true)
+                    }
+
+                    Button("重置分享链接") {
+                        copyShortcutURL = Self.defaultCopyShortcutURL
+                        pushShortcutURL = Self.defaultPushShortcutURL
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+                }
+                .padding(.top, 6)
+            } label: {
+                Label("自定义或查看 iCloud 快捷指令 ID", systemImage: "slider.horizontal.3")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineSpacing(2)
+            }
+
+            // 4. 原生 AppIntents 系统动作介绍
+            VStack(alignment: .leading, spacing: 6) {
+                Text("高级编排：PasteLink 原生系统动作已深度集成")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
 
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label("获取 Windows 最新剪贴板", systemImage: "doc.on.clipboard.fill")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(.blue)
-                        Text("系统原生动作 · 读取电脑最新同步文本")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                    Label("获取 Windows 最新剪贴板", systemImage: "doc.on.clipboard.fill")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.blue)
                     Spacer()
+                    Text("系统动作 · 免打开 App")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(8)
                 .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label("发送到 Windows 剪贴板", systemImage: "paperplane.fill")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(.purple)
-                        Text("系统原生动作 · 将手机内容蓝牙直发电脑")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                    Label("发送到 Windows 剪贴板", systemImage: "paperplane.fill")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.purple)
                     Spacer()
+                    Text("系统动作 · 蓝牙直发")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(8)
                 .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 Button {
-                    if let url = URL(string: "shortcuts://") {
+                    if let url = URL(string: "shortcuts://create-shortcut") {
                         UIApplication.shared.open(url)
                     }
                 } label: {
-                    Label("打开 Apple「快捷指令」App", systemImage: "plus.circle.fill")
-                        .font(.subheadline.bold())
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.blue.opacity(0.15))
-                        .foregroundStyle(.blue)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Label("进入 Apple「快捷指令」新建画布", systemImage: "plus.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .padding(.top, 2)
             }
-            .padding(.vertical, 4)
+            .padding(.top, 4)
         } header: {
-            Text("Apple 快捷指令原生集成")
+            Text("Apple 快捷指令")
         } footer: {
-            Text("在「快捷指令」中点击 [+] 新建，搜索「PasteLink」即可自由编排自动化流程。")
-                .font(.caption2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("复制：新建快捷指令，依次添加 PasteLink 的“获取 Windows 最新剪贴板”和系统的“复制到剪贴板”，将前一步的结果传给后一步。")
+                Text("推送：依次添加系统“获取剪贴板”和 PasteLink 的“发送到 Windows 剪贴板”。请分别命名为“PasteLink 一键复制”和“PasteLink 一键推送”。")
+                Text("已配置分享链接时，可打开链接并在系统页面确认添加。旧版链接不适用于正式版。")
+            }
+            .font(.caption2)
         }
     }
 
@@ -231,7 +374,27 @@ struct HardwareIntegrationView: View {
     }
 
     private func installShortcut(urlStr: String) {
-        if !urlStr.isEmpty, let url = URL(string: urlStr) {
+        guard let url = shortcutURL(urlStr) ?? URL(string: "shortcuts://create-shortcut") else { return }
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+        UIApplication.shared.open(url)
+    }
+
+    private func shortcutURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.scheme?.lowercased() == "https",
+              ["icloud.com", "www.icloud.com"].contains(url.host?.lowercased() ?? ""),
+              url.pathComponents.count == 3,
+              url.pathComponents[1] == "shortcuts",
+              !Self.retiredShortcutIDs.contains(url.lastPathComponent.lowercased()) else { return nil }
+        return url
+    }
+
+    private func runShortcut(name: String) {
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
+        if let url = URL(string: "shortcuts://run-shortcut?name=\(encoded)") {
             UIApplication.shared.open(url)
         }
     }

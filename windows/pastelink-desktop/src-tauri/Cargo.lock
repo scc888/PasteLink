@@ -2715,13 +2715,16 @@ dependencies = [
 
 [[package]]
 name = "pastelink-desktop"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "arboard",
+ "base64 0.22.1",
  "chrono",
+ "clipboard-win",
  "env_logger",
+ "image",
  "log",
  "serde",
  "serde_json",

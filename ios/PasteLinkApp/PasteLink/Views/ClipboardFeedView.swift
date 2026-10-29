@@ -4,6 +4,7 @@ import SwiftUI
 struct ClipboardFeedView: View {
     @ObservedObject var bluetooth: BluetoothManager
     @ObservedObject var store = PasteLinkStore.shared
+    @ObservedObject var lan = LANManager.shared
 
     @State private var searchText: String = ""
     @State private var selectedFilter: FilterType = .all
@@ -16,6 +17,7 @@ struct ClipboardFeedView: View {
         case all = "全部"
         case windows = "来自电脑"
         case iphone = "来自手机"
+        case image = "图片"
         case pinned = "已置顶"
 
         var id: String { rawValue }
@@ -30,6 +32,8 @@ struct ClipboardFeedView: View {
             list = list.filter { $0.source == "windows" }
         case .iphone:
             list = list.filter { $0.source == "iphone" }
+        case .image:
+            list = list.filter { $0.category == "image" }
         case .pinned:
             list = list.filter { $0.isPinned }
         }
@@ -44,13 +48,18 @@ struct ClipboardFeedView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
+                    // 0. 实时分片传输进度浮窗 (双向图片传输状态反馈)
+                    if let transfer = bluetooth.currentTransfer {
+                        transferProgressBanner(transfer: transfer)
+                    }
+
                     // 1. 顶部设备状态英雄卡片
                     DeviceBannerCard(bluetooth: bluetooth) {
                         isPairingSheetPresented = true
                     }
 
                     // 1.5 发现附近的电脑设备待选区
-                    if bluetooth.connectionState != .connected && !bluetooth.discoveredDevices.isEmpty {
+                    if bluetooth.connectionState != .connected && !lan.isLanAvailable && !bluetooth.discoveredDevices.isEmpty {
                         discoveredDevicesSection
                     }
 
@@ -73,7 +82,7 @@ struct ClipboardFeedView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if !store.history.isEmpty {
+                    if store.history.contains(where: { !$0.isPinned }) {
                         Button {
                             showClearConfirm = true
                         } label: {
@@ -138,7 +147,7 @@ struct ClipboardFeedView: View {
     private var discoveredDevicesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("发现附近的 PasteLink 电脑 (点击连接)")
+                Text(bluetooth.connectionState == .connecting ? "正在连接电脑..." : "发现附近的 PasteLink 电脑")
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -175,9 +184,10 @@ struct ClipboardFeedView: View {
 
                     Spacer()
 
-                    Button("连接") {
+                    Button(bluetooth.isConnecting(to: device.peripheral) ? "连接中..." : "连接") {
                         bluetooth.connect(to: device.peripheral)
                     }
+                    .disabled(bluetooth.connectionState == .connecting)
                     .font(.caption.bold())
                     .buttonStyle(.borderedProminent)
                     .tint(.blue)
@@ -194,9 +204,12 @@ struct ClipboardFeedView: View {
 
     private var quickSendSection: some View {
         Button {
-            if let clip = UIPasteboard.general.string, !clip.isEmpty {
+            if let img = UIPasteboard.general.image {
+                bluetooth.sendImageToWindows(image: img)
+                triggerToast("📤 正在推送无损图片至 Windows...")
+            } else if let clip = UIPasteboard.general.string, !clip.isEmpty {
                 bluetooth.sendToWindows(text: clip)
-                triggerToast("📤 已加密发送至 Windows")
+                triggerToast("📤 正在发送文本，请在电脑端确认接收")
             } else {
                 triggerToast("⚠️ 当前 iPhone 剪贴板为空")
             }
@@ -207,7 +220,7 @@ struct ClipboardFeedView: View {
                     .foregroundStyle(.white)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("发送当前 iPhone 剪贴板到电脑")
+                    Text("发送当前剪贴板 (文字/图片) 到电脑")
                         .font(.subheadline.bold())
                         .foregroundStyle(.white)
                     Text("电脑端直接按 Ctrl+V 即可粘贴")
@@ -228,14 +241,58 @@ struct ClipboardFeedView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .shadow(color: Color.blue.opacity(0.3), radius: 8, y: 4)
         }
-        .disabled(bluetooth.connectionState != .connected)
-        .opacity(bluetooth.connectionState == .connected ? 1.0 : 0.6)
+        .disabled(bluetooth.connectionState != .connected && !lan.isLanAvailable)
+        .opacity(bluetooth.connectionState == .connected || lan.isLanAvailable ? 1.0 : 0.6)
     }
 
-    // MARK: - 历史流水列表
+    // MARK: - 实时传输进度条卡片
+
+    private func transferProgressBanner(transfer: TransferState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: transfer.direction.iconName)
+                    .font(.title2)
+                    .foregroundStyle(transfer.direction == .sending ? .blue : .green)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(transfer.direction.title)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.primary)
+
+                    Text(transfer.detailText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text("\(transfer.progressPercentage)%")
+                    .font(.subheadline.monospacedDigit().bold())
+                    .foregroundStyle(transfer.direction == .sending ? .blue : .green)
+            }
+
+            ProgressView(value: Double(transfer.progressPercentage), total: 100.0)
+                .tint(transfer.direction == .sending ? .blue : .green)
+                .scaleEffect(x: 1, y: 1.5, anchor: .center)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: (transfer.direction == .sending ? Color.blue : Color.green).opacity(0.12), radius: 8, y: 3)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke((transfer.direction == .sending ? Color.blue : Color.green).opacity(0.3), lineWidth: 1)
+        )
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: transfer)
+    }
+
+    // MARK: - 历史流水列表 (采用高性能 LazyVStack 消除滚动卡顿)
 
     private var historyStreamSection: some View {
-        VStack(spacing: 12) {
+        LazyVStack(spacing: 12) {
             if filteredItems.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "clipboard")
@@ -259,12 +316,25 @@ struct ClipboardFeedView: View {
                 ForEach(filteredItems) { item in
                     ClipboardCardView(
                         item: item,
+                        transferState: bluetooth.currentTransfer?.targetSha256 == item.sha256 ? bluetooth.currentTransfer : nil,
                         onCopy: { copied in
-                            UIPasteboard.general.string = copied.content
+                            if copied.category == "image" {
+                                let fileURL = PasteLinkStore.imageFileURL(for: copied.sha256)
+                                if let data = try? Data(contentsOf: fileURL), UIImage(data: data) != nil {
+                                    UIPasteboard.general.setData(data, forPasteboardType: "public.png")
+                                } else {
+                                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                    triggerToast("图片原文件不可用，请重新同步后再复制")
+                                    return false
+                                }
+                            } else {
+                                UIPasteboard.general.string = copied.content
+                            }
                             let feedback = UINotificationFeedbackGenerator()
                             feedback.prepare()
                             feedback.notificationOccurred(.success)
                             triggerToast("📋 已复制到系统剪贴板")
+                            return true
                         },
                         onTogglePin: { id in
                             store.togglePin(id: id)
@@ -295,10 +365,14 @@ struct ClipboardFeedView: View {
             .font(.subheadline.weight(.medium))
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
-            .background(Color.black.opacity(0.85))
-            .foregroundStyle(.white)
+            .background(.ultraThinMaterial)
+            .foregroundStyle(.primary)
             .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+            .overlay(
+                Capsule()
+                    .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.18), radius: 12, y: 6)
             .padding(.bottom, 24)
             .transition(.move(edge: .bottom).combined(with: .opacity))
     }

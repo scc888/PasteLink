@@ -19,6 +19,11 @@ fn get_status(state: State<'_, AppState>) -> StatusPayload {
 }
 
 #[tauri::command]
+fn get_lan_status(state: State<'_, AppState>) -> bool {
+    state.is_lan_connected()
+}
+
+#[tauri::command]
 fn toggle_pause(state: State<'_, AppState>, app: AppHandle, paused: bool) -> bool {
     state.set_paused(paused);
     let _ = app.emit("pause-state-changed", paused);
@@ -36,6 +41,44 @@ fn copy_to_system_clipboard(state: State<'_, AppState>, text: String) -> Result<
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     cb.set_text(&text).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn copy_item_by_id(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let item_opt = {
+        let items = state.recent_items.lock().unwrap();
+        items.iter().find(|i| i.id == id).cloned()
+    };
+
+    if let Some(item) = item_opt {
+        state.is_duplicate_or_record(&item.sha256);
+        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+
+        if item.item_type == "image" {
+            if let Some(ref data_url) = item.image_data {
+                if let Some(b64) = data_url.strip_prefix("data:image/png;base64,") {
+                    use base64::Engine;
+                    let png_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .map_err(|e| format!("Base64 解码失败: {}", e))?;
+
+                    let (w, h, rgba) = crate::core::protocol::decode_png_to_rgba(&png_bytes)?;
+                    cb.set_image(arboard::ImageData {
+                        width: w as usize,
+                        height: h as usize,
+                        bytes: std::borrow::Cow::from(rgba),
+                    })
+                    .map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
+            }
+            return Err("图像数据缺失".to_string());
+        } else {
+            cb.set_text(&item.content).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("未找到指定历史条目".to_string())
 }
 
 #[tauri::command]
@@ -61,6 +104,7 @@ fn toggle_pin_history_item(state: State<'_, AppState>, app: AppHandle, id: Strin
 fn refresh_pairing_pin(state: State<'_, AppState>) -> String {
     let new_pin = AppState::generate_pin();
     *state.pairing_code.lock().unwrap() = new_pin.clone();
+    state.clear_lan_seen();
     state.persist_current_settings();
     new_pin
 }
@@ -90,17 +134,23 @@ fn hide_window(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Ok(file) = std::fs::File::create("D:\\PasteLink\\pastelink.log") {
-        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-            .target(env_logger::Target::Pipe(Box::new(file)))
-            .try_init();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let log_dir = std::path::PathBuf::from(appdata).join("PasteLink");
+        let _ = std::fs::create_dir_all(&log_dir);
+        if let Ok(file) = std::fs::File::create(log_dir.join("pastelink.log")) {
+            let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                .target(env_logger::Target::Pipe(Box::new(file)))
+                .try_init();
+        }
     }
 
     // 1. 创建跨模块 Channel
     // Channel: 剪贴板变化 (Windows) -> BLE Notify 异步发送
-    let (clip_send_tx, mut clip_send_rx) = mpsc::channel::<String>(64);
+    let (clip_send_tx, mut clip_send_rx) =
+        mpsc::channel::<crate::core::protocol::ClipboardPayload>(64);
     // Channel: BLE Write (iPhone) -> 剪贴板写入线程
-    let (clip_write_tx, clip_write_rx) = std::sync::mpsc::channel::<String>();
+    let (clip_write_tx, clip_write_rx) =
+        std::sync::mpsc::channel::<crate::core::protocol::ClipboardPayload>();
 
     let app_state = AppState::new(clip_send_tx);
 
@@ -109,10 +159,12 @@ pub fn run() {
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             get_status,
+            get_lan_status,
             toggle_pause,
             toggle_ignore_password_manager,
             toggle_autostart,
             copy_to_system_clipboard,
+            copy_item_by_id,
             clear_history,
             delete_history_item,
             toggle_pin_history_item,
@@ -131,11 +183,18 @@ pub fn run() {
                     clip_write_rx,
                 );
 
+                // 2.5 启动局域网极速直连服务 (HTTP REST API + UDP 自动发现)
+                crate::core::lan::LanServer::start(
+                    app_handle.clone(),
+                    state.clone(),
+                    clip_write_tx.clone(),
+                );
+
                 // 3. 启动 BLE GATT Server
                 let state_for_ble = state.clone();
                 let app_for_ble = app_handle.clone();
                 std::thread::spawn(move || {
-                    match BleServer::start(app_for_ble, state_for_ble.clone(), clip_write_tx) {
+                    match BleServer::start(app_for_ble.clone(), state_for_ble.clone(), clip_write_tx) {
                         Ok(server) => {
                             log::info!("[BLE] GATT 服务就绪，等待 iPhone 连接...");
                             let server = Arc::new(server);
@@ -146,9 +205,9 @@ pub fn run() {
                                 .unwrap();
 
                             rt.block_on(async move {
-                                while let Some(text) = clip_send_rx.recv().await {
+                                while let Some(payload) = clip_send_rx.recv().await {
                                     let pin = state_for_ble.pairing_code.lock().unwrap().clone();
-                                    if let Err(e) = server.notify_clipboard(&text, &pin) {
+                                    if let Err(e) = server.notify_payload(&app_for_ble, &payload, &pin, &state_for_ble) {
                                         log::warn!("[BLE] 广播推送异常: {}", e);
                                     }
                                 }
@@ -231,11 +290,19 @@ pub fn run() {
                     let _ = tray;
                 }
 
-                // 8. 应用启动时主动定位并呈递窗口，让用户立刻看到界面
-                if let Some(window) = app.get_webview_window("main") {
-                    WindowEffectManager::position_tray_window(&window);
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                // 8. 自动校准开机启动路径（若已开启且路径变动）
+                crate::core::autostart::AutoStartManager::sync_current_exe_if_enabled();
+
+                // 9. 窗口呈递逻辑 (开机自启 --minimized 时保持托盘静默，常规手动启动时展示窗口)
+                let is_minimized = std::env::args().any(|arg| arg == "--minimized");
+                if !is_minimized {
+                    if let Some(window) = app.get_webview_window("main") {
+                        WindowEffectManager::position_tray_window(&window);
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                } else {
+                    log::info!("[Startup] 检测到 --minimized 参数，保持静默托盘运行");
                 }
 
                 Ok(())
@@ -245,7 +312,7 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+        if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
             api.prevent_exit();
         }
     });

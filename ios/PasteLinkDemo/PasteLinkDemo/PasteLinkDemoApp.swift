@@ -15,7 +15,7 @@ struct PasteLinkDemoApp: App {
                 .environmentObject(bluetoothManager)
                 .onChange(of: scenePhase) { newPhase in
                     if newPhase == .active {
-                        // 方案 B：前台预启动灵动岛实例，保证在后台接收 BLE 剪贴板时可直接静默 update
+                        // 保证前台激活时灵动岛状态与连接状态对齐：已连接常驻，未连接自动退出
                         LiveActivityManager.shared.ensureActivityStarted()
                     }
                 }

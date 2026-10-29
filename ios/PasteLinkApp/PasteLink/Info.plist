@@ -13,7 +13,7 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>UILaunchScreen</key>
@@ -24,6 +24,8 @@
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>PasteLink 使用低功耗蓝牙与 Windows 电脑进行本地加密的跨设备剪贴板同步</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>将您选择的剪贴板原图保存到系统相册；PasteLink 不读取您的相册。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>PasteLink 使用蓝牙连接 Windows 电脑同步剪贴板</string>
 	<key>NSSupportsLiveActivities</key>
@@ -43,5 +45,12 @@
 	<array>
 		<string>bluetooth-central</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PasteLink 使用局域网实现与电脑之间的极速端到端加密数据直连传输（无损图片秒级同步）</string>
 </dict>
 </plist>

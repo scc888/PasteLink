@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 首次配对 6 位 PIN 码输入浮层 (支持动态校验、输入满 6 位自动确认、丝滑退格删除)
+/// 6 位 PIN 码输入浮层；用户确认后验证，握手成功才替换已保存的密钥。
 struct PairingSheet: View {
     @Binding var isPresented: Bool
     @State private var fullPinText: String = ""
@@ -52,17 +52,14 @@ struct PairingSheet: View {
                             .opacity(0.01)
                             .frame(width: 1, height: 1)
                             .onChange(of: fullPinText) { _, newValue in
-                                let filtered = String(newValue.filter { $0.isNumber }.prefix(6))
+                                let filtered = String(newValue.filter { "0123456789".contains($0) }.prefix(6))
                                 if filtered != newValue {
                                     fullPinText = filtered
                                 }
                                 errorMessage = nil
-
-                                // 2. 输入完 6 位配对码后自动触发确认与校验
-                                if filtered.count == 6 && !isVerifying && !isSuccess {
-                                    verifyAndConfirm(pin: filtered)
-                                }
                             }
+                            .disabled(isVerifying || isSuccess)
+                            .accessibilityLabel("6 位电脑配对码")
 
                         // 上层渲染的 6 个精致数字方框
                         HStack(spacing: 10) {
@@ -157,6 +154,7 @@ struct PairingSheet: View {
                     Button("关闭") {
                         isPresented = false
                     }
+                    .disabled(isVerifying)
                 }
             }
             .onAppear {
@@ -172,6 +170,7 @@ struct PairingSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(24)
+        .interactiveDismissDisabled(isVerifying)
     }
 
     private func getDigit(at index: Int) -> String {
@@ -182,13 +181,11 @@ struct PairingSheet: View {
 
     /// 1. 执行配对码校验握手
     private func verifyAndConfirm(pin: String) {
-        guard !isVerifying else { return }
+        guard !isVerifying && !isSuccess else { return }
         isVerifying = true
         errorMessage = nil
 
-        // 立即记录为最近输入的配对码，确保重启或意外退出也不会丢失
-        PasteLinkStore.shared.savePairingPIN(pin)
-
+        // BluetoothManager saves the candidate only after a successful challenge response.
         Task {
             let (success, message) = await BluetoothManager.shared.verifyPairingPIN(candidatePin: pin)
 

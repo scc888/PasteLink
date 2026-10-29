@@ -2,6 +2,7 @@ import AppIntents
 import ActivityKit
 import AudioToolbox
 import UIKit
+import UniformTypeIdentifiers
 import WidgetKit
 
 // MARK: - 错误定义
@@ -22,12 +23,13 @@ enum PasteIntentError: Error, CustomLocalizedStringResourceConvertible {
 
 // MARK: - 1. 快捷指令：获取 Windows 最新剪贴板 (Windows → iPhone 核心)
 
-/// 获取 Windows 最新剪贴板文本
+/// 获取 Windows 最新剪贴板文本或图片
 ///
 /// 核心规范 (单一职责):
-/// - 从 `group.com.pastelink.shared` 读取 `lastReceivedClipboard`
-/// - 通过 `ReturnsValue<String>` 返回文本给快捷指令后续动作 (由 Apple 原生“复制到剪贴板”动作真正写入系统)
-/// - 不调用 `UIPasteboard.general`，不要求打开 PasteLink 主 App (openAppWhenRun = false)
+/// - 从 `group.com.pastelink.shared` 读取 `lastReceivedType` 与对应的文本或图片
+/// - 通过 `ReturnsValue<IntentFile>` 返回文件/媒体给快捷指令后续动作 (由 Apple 原生“复制到剪贴板”动作真正写入系统)
+/// - 只返回内容，由快捷指令的“复制到剪贴板”动作执行写入
+/// - 不要求打开 PasteLink 主 App (openAppWhenRun = false)
 ///
 /// @author PasteLink
 /// @date 2026-09-02
@@ -36,24 +38,35 @@ struct GetWindowsClipboardIntent: AppIntent {
     static var title: LocalizedStringResource = "获取 Windows 最新剪贴板"
 
     static var description: IntentDescription = IntentDescription(
-        "从 PasteLink 读取 Windows 最近同步的剪贴板文本，供快捷指令「复制到剪贴板」使用"
+        "从 PasteLink 读取 Windows 最近同步的剪贴板内容（文本或图片），供快捷指令使用"
     )
 
     static var openAppWhenRun: Bool = false
 
-    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+    func perform() async throws -> some IntentResult & ReturnsValue<IntentFile> {
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
-        guard let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty else {
-            throw PasteIntentError.emptyClipboard
-        }
+        let type = defaults.string(forKey: "lastReceivedType") ?? "text"
 
-        await MainActor.run {
-            UIPasteboard.general.string = text
-            UIPasteboard.general.setValue(text, forPasteboardType: "public.utf8-plain-text")
-            AudioServicesPlaySystemSound(1519)
-        }
+        if type == "image" {
+            guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") else {
+                throw PasteIntentError.emptyClipboard
+            }
+            let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+            guard let imgData = try? Data(contentsOf: imgURL), UIImage(data: imgData) != nil else {
+                throw PasteIntentError.emptyClipboard
+            }
 
-        return .result(value: text)
+            let file = IntentFile(data: imgData, filename: "clipboard.png", type: .png)
+            return .result(value: file)
+        } else {
+            guard let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty else {
+                throw PasteIntentError.emptyClipboard
+            }
+
+            let textData = text.data(using: .utf8) ?? Data()
+            let file = IntentFile(data: textData, filename: "clipboard.txt", type: .plainText)
+            return .result(value: file)
+        }
     }
 }
 
@@ -93,13 +106,42 @@ struct SendToWindowsIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         var targetText: String = text ?? ""
+        var targetImageData: Data? = nil
         if targetText.isEmpty {
             await MainActor.run {
-                targetText = UIPasteboard.general.string ?? ""
+                if let img = UIPasteboard.general.image, let data = img.pngData() {
+                    targetImageData = data
+                } else {
+                    targetText = UIPasteboard.general.string ?? ""
+                }
             }
         }
+
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+
+        if let imgData = targetImageData,
+           let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+            let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+            try? imgData.write(to: pendingImgURL, options: .atomic)
+            defaults.set("image", forKey: "pendingSendType")
+            defaults.removeObject(forKey: "pendingSendToWindows")
+
+            let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                notificationName,
+                nil,
+                nil,
+                true
+            )
+
+            await MainActor.run {
+                AudioServicesPlaySystemSound(1519)
+            }
+            return .result()
+        }
+
         if targetText.isEmpty {
-            let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
             targetText = defaults.string(forKey: "pendingSendToWindows") ?? ""
         }
 
@@ -108,7 +150,7 @@ struct SendToWindowsIntent: AppIntent {
         }
 
         // 存入 App Group 跨进程共享缓存
-        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        defaults.set("text", forKey: "pendingSendType")
         defaults.set(targetText, forKey: "pendingSendToWindows")
 
         // 通过 Darwin Notification 通知主 App 进程立即投递 BLE 剪贴板包
@@ -144,6 +186,22 @@ struct ControlCenterCopyIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let type = defaults.string(forKey: "lastReceivedType") ?? "text"
+
+        if type == "image" {
+            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+                let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+                if let imgData = try? Data(contentsOf: imgURL), let image = UIImage(data: imgData) {
+                    await MainActor.run {
+                        UIPasteboard.general.image = image
+                        UIPasteboard.general.setData(imgData, forPasteboardType: "public.png")
+                        AudioServicesPlaySystemSound(1519)
+                    }
+                }
+            }
+            return .result()
+        }
+
         guard let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty else {
             return .result()
         }
@@ -171,15 +229,44 @@ struct ControlCenterPushIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         var clipText = ""
+        var clipImageData: Data? = nil
         await MainActor.run {
-            clipText = UIPasteboard.general.string ?? ""
+            if let img = UIPasteboard.general.image, let data = img.pngData() {
+                clipImageData = data
+            } else {
+                clipText = UIPasteboard.general.string ?? ""
+            }
+        }
+
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+
+        if let imgData = clipImageData,
+           let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+            let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+            try? imgData.write(to: pendingImgURL, options: .atomic)
+            defaults.set("image", forKey: "pendingSendType")
+            defaults.removeObject(forKey: "pendingSendToWindows")
+
+            let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                notificationName,
+                nil,
+                nil,
+                true
+            )
+
+            await MainActor.run {
+                AudioServicesPlaySystemSound(1519)
+            }
+            return .result()
         }
 
         guard !clipText.isEmpty else {
             return .result()
         }
 
-        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        defaults.set("text", forKey: "pendingSendType")
         defaults.set(clipText, forKey: "pendingSendToWindows")
 
         // 触发 Darwin Notification 发送
@@ -208,19 +295,39 @@ struct PasteFromWindowsIntent: AppIntent {
     static var title: LocalizedStringResource = "粘贴 Windows 剪贴板"
 
     static var description: IntentDescription = IntentDescription(
-        "将 Windows 上最近复制的内容粘贴到 iPhone 剪贴板"
+        "将 Windows 上最近复制的内容（文本或图片）粘贴到 iPhone 剪贴板"
     )
 
     static var openAppWhenRun: Bool = false
 
     func perform() async throws -> some IntentResult {
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let type = defaults.string(forKey: "lastReceivedType") ?? "text"
+
+        if type == "image" {
+            guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") else {
+                throw PasteIntentError.emptyClipboard
+            }
+            let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+            guard let imgData = try? Data(contentsOf: imgURL), let image = UIImage(data: imgData) else {
+                throw PasteIntentError.emptyClipboard
+            }
+
+            await MainActor.run {
+                UIPasteboard.general.image = image
+                UIPasteboard.general.setData(imgData, forPasteboardType: "public.png")
+                AudioServicesPlaySystemSound(1519)
+            }
+            return .result()
+        }
+
         guard let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty else {
             throw PasteIntentError.emptyClipboard
         }
 
         await MainActor.run {
             UIPasteboard.general.string = text
+            UIPasteboard.general.setValue(text, forPasteboardType: "public.utf8-plain-text")
             AudioServicesPlaySystemSound(1519)
         }
 
@@ -243,6 +350,28 @@ struct CopyFromWidgetIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let type = defaults.string(forKey: "lastReceivedType") ?? "text"
+
+        if type == "image" {
+            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+                let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+                if let imgData = try? Data(contentsOf: imgURL), let image = UIImage(data: imgData) {
+                    await MainActor.run {
+                        UIPasteboard.general.image = image
+                        UIPasteboard.general.setData(imgData, forPasteboardType: "public.png")
+                        AudioServicesPlaySystemSound(1519)
+                    }
+
+                    // 复制完成后收起灵动岛并记录主动收起时间，防止 App 激活瞬间反弹
+                    defaults.set(Date().timeIntervalSince1970, forKey: "lastDismissedAt")
+                    for activity in Activity<PasteLinkActivityAttributes>.activities {
+                        await activity.end(nil, dismissalPolicy: .immediate)
+                    }
+                }
+            }
+            return .result()
+        }
+
         if let text = defaults.string(forKey: "lastReceivedClipboard"), !text.isEmpty {
             await MainActor.run {
                 UIPasteboard.general.string = text
@@ -250,7 +379,8 @@ struct CopyFromWidgetIntent: AppIntent {
                 AudioServicesPlaySystemSound(1519)
             }
 
-            // 复制完成后收起灵动岛
+            // 复制完成后收起灵动岛并记录主动收起时间，防止 App 激活瞬间反弹
+            defaults.set(Date().timeIntervalSince1970, forKey: "lastDismissedAt")
             for activity in Activity<PasteLinkActivityAttributes>.activities {
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
@@ -272,12 +402,38 @@ struct PushFromWidgetIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         var clipText = ""
+        var clipImageData: Data? = nil
         await MainActor.run {
-            clipText = UIPasteboard.general.string ?? ""
+            if let img = UIPasteboard.general.image, let data = img.pngData() {
+                clipImageData = data
+            } else {
+                clipText = UIPasteboard.general.string ?? ""
+            }
         }
 
-        if !clipText.isEmpty {
-            let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+
+        if let imgData = clipImageData,
+           let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+            let pendingImgURL = containerURL.appendingPathComponent("pending_send_image.png")
+            try? imgData.write(to: pendingImgURL, options: .atomic)
+            defaults.set("image", forKey: "pendingSendType")
+            defaults.removeObject(forKey: "pendingSendToWindows")
+
+            let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                notificationName,
+                nil,
+                nil,
+                true
+            )
+
+            await MainActor.run {
+                AudioServicesPlaySystemSound(1519)
+            }
+        } else if !clipText.isEmpty {
+            defaults.set("text", forKey: "pendingSendType")
             defaults.set(clipText, forKey: "pendingSendToWindows")
 
             let notificationName = CFNotificationName("com.pastelink.sendPendingClipboard" as CFString)
@@ -315,23 +471,39 @@ struct CopyFromLiveActivityIntent: LiveActivityIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let targetText: String
-        if let t = text, !t.isEmpty {
-            targetText = t
-        } else {
-            let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
-            targetText = defaults.string(forKey: "lastReceivedClipboard") ?? ""
-        }
+        let defaults = UserDefaults(suiteName: "group.com.pastelink.shared") ?? UserDefaults.standard
+        let type = defaults.string(forKey: "lastReceivedType") ?? "text"
 
-        if !targetText.isEmpty {
-            await MainActor.run {
-                UIPasteboard.general.string = targetText
-                UIPasteboard.general.setValue(targetText, forPasteboardType: "public.utf8-plain-text")
-                AudioServicesPlaySystemSound(1519)
+        if type == "image" {
+            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.pastelink.shared") {
+                let imgURL = containerURL.appendingPathComponent("last_received_image.png")
+                if let imgData = try? Data(contentsOf: imgURL), let image = UIImage(data: imgData) {
+                    await MainActor.run {
+                        UIPasteboard.general.image = image
+                        UIPasteboard.general.setData(imgData, forPasteboardType: "public.png")
+                        AudioServicesPlaySystemSound(1519)
+                    }
+                }
+            }
+        } else {
+            let targetText: String
+            if let t = text, !t.isEmpty {
+                targetText = t
+            } else {
+                targetText = defaults.string(forKey: "lastReceivedClipboard") ?? ""
+            }
+
+            if !targetText.isEmpty {
+                await MainActor.run {
+                    UIPasteboard.general.string = targetText
+                    UIPasteboard.general.setValue(targetText, forPasteboardType: "public.utf8-plain-text")
+                    AudioServicesPlaySystemSound(1519)
+                }
             }
         }
 
-        // 复制成功后自动收起灵动岛
+        // 复制成功后自动收起灵动岛并记录主动收起时间，防止 App 激活瞬间反弹
+        defaults.set(Date().timeIntervalSince1970, forKey: "lastDismissedAt")
         for activity in Activity<PasteLinkActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
